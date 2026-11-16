@@ -41,6 +41,10 @@ export interface LightboxController {
 
 /** The largest zoom (a pinch); the buttons and keys step 1, 2, 4. */
 export declare const MAX_ZOOM: number;
+/** How many times as high as wide an image is tall: it fits the width and pans at the fit. */
+export declare const TALL_RATIO: number;
+/** Whether an image of `width` by `height` (its own pixels) is tall: at least TALL_RATIO times as high as wide. */
+export declare function isTall(width: number, height: number): boolean;
 /** The zoom after a step: 1 doubles, -1 halves, 0 is the fit. */
 export declare function nextZoom(zoom: number, direction: number): number;
 /** The zoom of a click or a double tap: the image's own pixels (natural over fitted width), at least 2, at most MAX_ZOOM. */

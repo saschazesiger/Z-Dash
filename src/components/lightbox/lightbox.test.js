@@ -1,6 +1,6 @@
 /**
- * DS.lightbox without a DOM: its registration, the zoom steps and the pan
- * clamp. The behaviour in a browser is lightbox.spec.js.
+ * DS.lightbox without a DOM: its registration, the zoom steps, a tall image
+ * and the pan clamp. The behaviour in a browser is lightbox.spec.js.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,6 +35,19 @@ describe('DS.lightbox', () => {
     assert.equal(lightbox.detailZoom(1600, 0), 2);
   });
 
+  it('calls an image tall from TALL_RATIO times as high as wide', () => {
+    assert.equal(lightbox.TALL_RATIO, 2);
+    // A full-page screenshot and a phone's.
+    assert.equal(lightbox.isTall(1280, 6000), true);
+    assert.equal(lightbox.isTall(1170, 2532), true);
+    assert.equal(lightbox.isTall(1000, 2000), true);
+    // A portrait photo fits whole; a landscape one too.
+    assert.equal(lightbox.isTall(3000, 4000), false);
+    assert.equal(lightbox.isTall(1600, 900), false);
+    // Not loaded yet.
+    assert.equal(lightbox.isTall(0, 0), false);
+  });
+
   it('keeps a zoomed image covering its frame, and an unzoomed one still', () => {
     const frame = { width: 800, height: 600 };
     const size = { width: 800, height: 450 };
@@ -45,6 +58,8 @@ describe('DS.lightbox', () => {
     assert.deepEqual(lightbox.clampPan(-120.4, 60.6, size, frame, 2), { x: -120, y: 61 });
     // A narrow image at 2 is still narrower than the frame: no sideways pan.
     assert.deepEqual(lightbox.clampPan(90, 0, { width: 300, height: 600 }, frame, 2), { x: 0, y: 0 });
+    // A tall image at the fit: as wide as the frame, 2000 high, 700px of reach up and down and none sideways.
+    assert.deepEqual(lightbox.clampPan(50, 5000, { width: 800, height: 2000 }, frame, 1), { x: 0, y: 700 });
   });
 
   it('says where the viewer is in the system\'s words', () => {

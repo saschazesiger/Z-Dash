@@ -29,6 +29,7 @@
     "data-dragging",
     "data-failed",
     "data-loading",
+    "data-tall",
     "data-zoomed"
   ],
   "requires": [
@@ -72,6 +73,7 @@
     "DS.lightbox.show": "the same viewer as DS.lightbox.open, shown in the entry lightbox-open",
     "DS.lightbox.nextZoom": "a pure function: no motion",
     "DS.lightbox.detailZoom": "a pure function: no motion",
+    "DS.lightbox.isTall": "a pure function: no motion",
     "DS.lightbox.clampPan": "a pure function: no motion"
   },
   "exceptions": {

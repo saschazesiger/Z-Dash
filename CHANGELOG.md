@@ -4,6 +4,25 @@ All notable changes. Versions follow [semver](https://semver.org): renaming or r
 export is a major change; adding one is a minor change. Identifiers such as D7 refer to the design decisions in
 [plans/motion-2.md](plans/motion-2.md).
 
+## 3.2.0
+
+Additions to the lightbox and a fix of its fit; nothing was renamed or removed, no migration is required.
+
+### Added
+
+- **Lightbox** (`DS.lightbox`): a tall image (at least twice as high as wide: a full-page screenshot, a long chart;
+  `isTall(width, height)` and `TALL_RATIO`, new) fits the frame's width instead of being a narrow strip, opens at its
+  top and pans up and down at the fit, as a zoomed image does: a drag, the wheel, ArrowUp and ArrowDown, and the new
+  PageUp and PageDown (which pan a zoomed image too). On touch a mostly upright drag pans it and a sideways one still
+  swipes to the next image. The frame carries `data-tall` while it shows one.
+
+### Fixed
+
+- **Lightbox:** an image taller than the frame was cropped at the fit (the frame's grid row grew with the image, so its
+  `max-height: 100%` did not hold) and could not be moved until it was zoomed. The frame is now one track of its own
+  size: an image fits whole, a tall one as above. The pan is measured on the layout boxes, so it is right while the
+  viewer's entrance still scales it, and a new window size keeps it within the image.
+
 ## 3.1.0
 
 Additions to the lightbox; nothing was renamed or removed, no migration is required.

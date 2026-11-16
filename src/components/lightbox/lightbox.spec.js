@@ -1,9 +1,9 @@
 /**
  * The lightbox: a gallery item opens the viewer (a dialog, focus inside, back on
  * the item), the arrows, keys and thumbnails move, zoom and pan stay within the
- * image, Escape takes the zoom back first, swipe on touch, a failed image, the
- * list without a gallery, names, the phone and forced colours. Runs in the
- * `fallback` project too.
+ * image, Escape takes the zoom back first, swipe on touch, a tall image that
+ * pans at the fit, a failed image, the list without a gallery, names, the
+ * phone and forced colours. Runs in the `fallback` project too.
  */
 import { test, expect } from '../../../test/browser/base-test.js';
 import { ready, settle } from '../../../test/browser/helpers/motion.js';
@@ -253,6 +253,125 @@ test('a pinch that loses a finger: the finger left goes on without an error', as
   await expect(box.locator('.ds-lightbox__frame')).not.toHaveAttribute('data-dragging', '');
   expect(errors).toEqual([]);
   await page.keyboard.press('Escape');
+});
+
+/** Opens a tall image (a full-page screenshot, drawn on a canvas) and a landscape one after it, without a gallery. */
+async function openTall(page) {
+  await page.evaluate(() => {
+    const draw = (width, height) => {
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const g = canvas.getContext('2d');
+      for (let y = 0; y < height; y += 100) {
+        g.fillStyle = `hsl(${(y / 10) % 360} 60% 50%)`;
+        g.fillRect(0, y, width, 100);
+      }
+      return canvas.toDataURL();
+    };
+    const opener = document.querySelector('[data-demo="gallery"] .ds-lightbox__item');
+    DS.lightbox.show([{ src: draw(1280, 5000), alt: 'A whole page' }, { src: draw(800, 450), alt: 'A chart' }], { label: 'Screenshots', opener });
+  });
+  const box = page.getByRole('dialog', { name: 'Screenshots' });
+  await expect(box).toBeVisible();
+  await settle(page);
+  return box;
+}
+
+/** Where the tall image's top and bottom are against the frame's, and its zoom. */
+const place = (page) => page.evaluate(() => {
+  const frame = document.querySelector('.ds-lightbox__frame');
+  const f = frame.getBoundingClientRect();
+  const i = frame.querySelector('.ds-lightbox__image').getBoundingClientRect();
+  return { top: Math.round(i.top - f.top), bottom: Math.round(i.bottom - f.bottom), left: Math.round(i.left - f.left), width: Math.round(i.width - f.width), zoom: Number(frame.style.getPropertyValue('--ds-lightbox-zoom') || 1) };
+});
+
+test('a tall image fits the width, opens at its top and pans at the fit: wheel, drag, keys; never past its ends', async ({ page }) => {
+  await open(page);
+  const box = await openTall(page);
+  const frame = box.locator('.ds-lightbox__frame');
+  await expect(frame).toHaveAttribute('data-tall', '');
+  await expect(frame).not.toHaveAttribute('data-zoomed', '');
+  let at = await place(page);
+  expect(at.zoom).toBe(1);
+  expect(Math.abs(at.width), 'as wide as the frame').toBeLessThanOrEqual(1);
+  expect(Math.abs(at.top), 'at its top').toBeLessThanOrEqual(1);
+  expect(at.bottom, 'it runs on below').toBeGreaterThan(1000);
+  const rect = await frame.boundingBox();
+  const cx = rect.x + rect.width / 2;
+  const cy = rect.y + rect.height / 2;
+  // The wheel scrolls it as a page.
+  await page.mouse.move(cx, cy);
+  await page.mouse.wheel(0, 300);
+  await expect.poll(async () => (await place(page)).top).toBeLessThan(-250);
+  await settle(page);
+  // A drag follows the pointer, and the click that ends it does not zoom.
+  const before = (await place(page)).top;
+  await page.mouse.down();
+  await page.mouse.move(cx, cy - 200, { steps: 5 });
+  await page.mouse.up();
+  await settle(page);
+  at = await place(page);
+  expect(at.zoom, 'a drag is not a click').toBe(1);
+  expect(at.top).toBeCloseTo(before - 200, -1);
+  // The keys: ArrowUp back a step; PageDown to the bottom and no further.
+  await page.keyboard.press('ArrowUp');
+  await settle(page);
+  expect((await place(page)).top).toBeGreaterThan(at.top);
+  for (let i = 0; i < 20; i += 1) await page.keyboard.press('PageDown');
+  await settle(page);
+  at = await place(page);
+  expect(Math.abs(at.bottom), 'its bottom meets the frame\'s').toBeLessThanOrEqual(1);
+  // A click still zooms in, and Escape takes the zoom back first, keeping the image within the frame.
+  await page.mouse.click(cx, cy);
+  await expect(frame).toHaveAttribute('data-zoomed', '');
+  await page.keyboard.press('Escape');
+  await settle(page);
+  at = await place(page);
+  expect(at.zoom).toBe(1);
+  expect(at.bottom, 'still covers the frame').toBeLessThanOrEqual(1);
+  expect(at.top).toBeLessThanOrEqual(1);
+  // Sideways the arrows still go on; a landscape image fits whole, not tall.
+  await page.keyboard.press('ArrowRight');
+  await expect(box.locator('.ds-lightbox__count')).toHaveText('Image 2 of 2');
+  await expect(frame).not.toHaveAttribute('data-tall', '');
+  await settle(page);
+  at = await place(page);
+  expect(at.top, 'fits whole').toBeGreaterThanOrEqual(0);
+  expect(at.bottom).toBeLessThanOrEqual(0);
+  // Back to the tall one: at its top again.
+  await page.keyboard.press('ArrowLeft');
+  await expect(frame).toHaveAttribute('data-tall', '');
+  await settle(page);
+  expect(Math.abs((await place(page)).top)).toBeLessThanOrEqual(1);
+  await page.keyboard.press('Escape');
+  await settle(page);
+});
+
+test('a tall image on touch: an upright drag pans it, a sideways swipe still goes to the next image', async ({ page, browserName }) => {
+  test.skip(browserName === 'firefox', 'touch pointers are not emulated in Firefox');
+  await open(page);
+  const box = await openTall(page);
+  const drag = (dx, dy) => page.evaluate(([dx, dy]) => {
+    const frame = document.querySelector('.ds-lightbox__frame');
+    const r = frame.getBoundingClientRect();
+    const x0 = r.left + r.width / 2;
+    const y0 = r.top + r.height / 2;
+    const at = (type, i) => frame.dispatchEvent(new PointerEvent(type, { pointerId: 9, pointerType: 'touch', isPrimary: true, bubbles: true, clientX: x0 + (dx * i) / 5, clientY: y0 + (dy * i) / 5, button: 0 }));
+    at('pointerdown', 0);
+    for (let i = 1; i <= 5; i += 1) at('pointermove', i);
+    at('pointerup', 5);
+  }, [dx, dy]);
+  await drag(20, -250);
+  await settle(page);
+  const at = await place(page);
+  expect(at.top).toBeCloseTo(-250, -1);
+  expect(at.left, 'no sideways pan').toBe(0);
+  await expect(box.locator('.ds-lightbox__count')).toHaveText('Image 1 of 2');
+  await drag(-400, 30);
+  await expect(box.locator('.ds-lightbox__count')).toHaveText('Image 2 of 2');
+  await page.keyboard.press('Escape');
+  await settle(page);
 });
 
 test('one image: the first focus is Close, not the Zoom out a fit image disables', async ({ page }) => {

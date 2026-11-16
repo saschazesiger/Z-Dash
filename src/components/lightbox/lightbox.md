@@ -83,6 +83,10 @@ at that image (a click with Ctrl, Cmd or Shift keeps the link's own behaviour), 
   Ctrl with the wheel (a trackpad pinch) and two fingers zoom freely up to 4. A zoomed image pans with a drag, the wheel
   (two fingers on a trackpad; Shift with the wheel sideways) and the arrow keys, never further than the image covers
   the frame. Escape first goes back to the fit, then closes. `ds:zoom` (`{ zoom }`) follows.
+- **A tall image.** One at least twice as high as wide (`isTall()`, `TALL_RATIO`: a full-page screenshot, a long chart)
+  would be a narrow strip fitted whole, so it fits the frame's width instead (`data-tall` on the frame), opens at its
+  top and pans up and down at the fit as a zoomed image does: a drag, the wheel, ArrowUp and ArrowDown, PageUp and
+  PageDown. A finger's upright drag pans it; a sideways one still swipes to the next image.
 - **The original.** `original: true` (`create()`, `show()`) adds a link to the bar, named by the string `openImage`, that
   opens the current image on its own in a new tab: an image's `href` (a gallery item's own), else its `src`.
 - **Swipe.** Unzoomed, a finger swiped sideways leads the image; past a fifth of the frame it goes to the next or the
@@ -99,13 +103,14 @@ at that image (a click with Ctrl, Cmd or Shift keeps the link's own behaviour), 
   `on(type, fn)` (`open`, `close`, `change`, `zoom`, on the gallery) and `destroy()` (removes the viewer). `images` (a
   function returning the list) replaces the gallery's items.
 - `open(gallery, { index, opener })` and `close(gallery)`; `show(images, { index, opener, label, original })`.
-- `nextZoom(zoom, direction)`, `detailZoom(natural, fitted)`, `clampPan(x, y, size, frame, zoom)` and `MAX_ZOOM` (4)
-  are its arithmetic.
+- `nextZoom(zoom, direction)`, `detailZoom(natural, fitted)`, `isTall(width, height)`,
+  `clampPan(x, y, size, frame, zoom)`, `MAX_ZOOM` (4) and `TALL_RATIO` (2) are its arithmetic.
 
 ### Keyboard, names and forced colours
 
 - Keyboard: Tab stays in the viewer (the bar, the arrows, the row of thumbnails); ArrowLeft and ArrowRight move (pan
-  when zoomed), ArrowUp and ArrowDown pan, Home and End, `+`, `-`, `0`; Escape takes the zoom back, then closes.
+  when zoomed), ArrowUp and ArrowDown (and PageUp and PageDown) pan a zoomed or a tall image, Home and End, `+`, `-`,
+  `0`; Escape takes the zoom back, then closes.
 - Names and roles: the viewer is a dialog named by the gallery's `aria-label` (else the string `images`); each button
   has a name (the strings `zoomIn`, `zoomOut`, `close`, `previous`, `next`; the link of `original`: `openImage`); the image has the item's alt; the row of
   thumbnails is a group named "Images", each thumbnail named "Image 2 of 6: ..." with `aria-current` on the current
