@@ -1,6 +1,9 @@
 package cloudflare
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	"context"
 	"fmt"
 	"io"
@@ -15,16 +18,36 @@ import (
 )
 
 // DefaultReleaseURL is where Cloudflare publishes the connector binaries.
-const DefaultReleaseURL = "https://github.com/cloudflare/cloudflared/releases/latest/download"
+const DefaultReleaseURL = "https://github.com/cloudflare/cloudflared/releases/download/" + CloudflaredVersion
+
+// CloudflaredVersion is the cloudflared the app downloads when none is
+// installed, and Sums the SHA-256 of its Linux builds, from the release's
+// notes (the amd64 sum is the one the Dockerfile template pins too). A newer
+// cloudflared comes with an update of this module.
+const CloudflaredVersion = "2026.10.7"
+
+// Sums are the checksums of the builds of CloudflaredVersion, by asset.
+var Sums = map[string]string{
+	"cloudflared-linux-amd64": "1f99fb518b83dec2ba8d870a7cc991d82a77e6196295a3d2754ba17ab9f91872",
+	"cloudflared-linux-arm64": "3df43aedc9ff291d1735b5cb576cb97e0b157488796db2e32b28aecabb445775",
+	"cloudflared-linux-arm":   "74f690f6707182839b63e0465726c7776dd63f0a174390b911d5d71f35cab94e",
+	"cloudflared-linux-386":   "4823d2f038395617e04e4070601ab45c0c43f31f15ee7586be299e19ef49d46e",
+}
+
+// maxDownload bounds the download; cloudflared is about 40 MB.
+const maxDownload = 256 << 20
 
 // Installer fetches cloudflared into a directory the app owns, so remote
-// access works without asking anyone to install anything by hand. The binary
-// comes straight from Cloudflare's own release URL over TLS and is verified by
-// running it once before it is used.
+// access works without asking anyone to install anything by hand. It takes
+// a pinned version from Cloudflare's release over TLS, checks its SHA-256
+// before the file is made executable, and runs it once before it is used.
 type Installer struct {
 	Dir     string
 	BaseURL string
-	HTTP    *http.Client
+	// Sums are the expected SHA-256 of each asset; an asset without one is
+	// not installed.
+	Sums map[string]string
+	HTTP *http.Client
 
 	mu sync.Mutex
 }
@@ -34,6 +57,7 @@ func NewInstaller(dir string) *Installer {
 	return &Installer{
 		Dir:     dir,
 		BaseURL: DefaultReleaseURL,
+		Sums:    Sums,
 		HTTP:    &http.Client{Timeout: 15 * time.Minute},
 	}
 }
@@ -78,6 +102,10 @@ func (i *Installer) Ensure(ctx context.Context, progress func(string)) (string, 
 	if err != nil {
 		return "", err
 	}
+	want := i.Sums[asset]
+	if want == "" {
+		return "", fmt.Errorf("there is no checksum for %s, so it is not downloaded; install cloudflared yourself and put it on the PATH", asset)
+	}
 	if err := os.MkdirAll(i.Dir, 0o755); err != nil {
 		return "", fmt.Errorf("create %s: %w", i.Dir, err)
 	}
@@ -105,12 +133,13 @@ func (i *Installer) Ensure(ctx context.Context, progress func(string)) (string, 
 	tempName := temp.Name()
 	defer os.Remove(tempName)
 
-	body := io.Reader(&countingReader{
-		reader: resp.Body,
+	sum := sha256.New()
+	body := io.TeeReader(&countingReader{
+		reader: io.LimitReader(resp.Body, maxDownload+1),
 		total:  resp.ContentLength,
 		report: progress,
 		last:   time.Now(),
-	})
+	}, sum)
 	written, err := io.Copy(temp, body)
 	if closeErr := temp.Close(); err == nil {
 		err = closeErr
@@ -120,6 +149,12 @@ func (i *Installer) Ensure(ctx context.Context, progress func(string)) (string, 
 	}
 	if written < 1<<20 {
 		return "", fmt.Errorf("download cloudflared: the file is only %d bytes, that cannot be right", written)
+	}
+	if written > maxDownload {
+		return "", fmt.Errorf("download cloudflared: the file is larger than %d MB, that cannot be right", maxDownload>>20)
+	}
+	if got := hex.EncodeToString(sum.Sum(nil)); got != want {
+		return "", fmt.Errorf("download cloudflared: the file's SHA-256 is %s, not the published %s; it was not installed", got, want)
 	}
 	if err := os.Chmod(tempName, 0o755); err != nil {
 		return "", err

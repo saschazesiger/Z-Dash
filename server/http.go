@@ -74,6 +74,16 @@ func (a *App) handlers() (local, tunnel http.Handler) {
 // mux is one listener's routes: the server's own, the bypass paths, the
 // app's.
 func (a *App) mux() *http.ServeMux {
+	mux := a.baseMux()
+	for _, rt := range a.routes {
+		mux.Handle(rt.pattern, rt.handler)
+	}
+	return mux
+}
+
+// baseMux is the server's own routes, the bypass paths and the app's files
+// at / (ServeMux picks the most specific pattern, whatever the order).
+func (a *App) baseMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
@@ -97,9 +107,6 @@ func (a *App) mux() *http.ServeMux {
 		p := strings.TrimSuffix(path, "/")
 		mux.Handle(p, h)
 		mux.Handle(p+"/", h)
-	}
-	for _, rt := range a.routes {
-		mux.Handle(rt.pattern, rt.handler)
 	}
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "This API address does not exist.")

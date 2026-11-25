@@ -3,6 +3,7 @@ package server
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -435,5 +436,55 @@ func TestDemoTunnel(t *testing.T) {
 	}
 	if st := demo.Status(); st.Configured || !st.Job.OK {
 		t.Fatalf("after removal = %+v", st)
+	}
+}
+
+// Review findings: a conflicting route panics where it is registered, a bad
+// admin password stops the start, a set password costs no hash, the first
+// password is rate-limited, and IPv6 clients are limited by their /64.
+func TestHardening(t *testing.T) {
+	a := newApp(t, Config{})
+	func() {
+		defer func() {
+			if v := recover(); v == nil || !strings.Contains(fmt.Sprint(v), "/z-dash/") {
+				t.Errorf("a conflicting route: %v", v)
+			}
+		}()
+		a.HandleFunc("GET /{dir}/items", func(http.ResponseWriter, *http.Request) {})
+	}()
+	func() {
+		defer func() {
+			if v := recover(); v == nil {
+				t.Error("a second /api/session was accepted")
+			}
+		}()
+		a.HandleFunc("GET /api/session", func(http.ResponseWriter, *http.Request) {})
+	}()
+	a.Unguarded("POST /demo/form", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "ok") })
+	r := httptest.NewRequest("POST", "http://192.168.1.5/demo/form", strings.NewReader("a=b"))
+	w := httptest.NewRecorder()
+	a.Handler().ServeHTTP(w, r)
+	if w.Code != 200 {
+		t.Errorf("an unguarded form post: %d", w.Code)
+	}
+
+	if _, err := New(Config{Name: "X", DataDir: t.TempDir(), AdminPassword: "short"}); err == nil {
+		t.Error("a password too short to set did not stop the start")
+	}
+	for _, p := range []string{"/api", "/z-dash", "/healthz", "/{x}", "/a b", "/x/../api"} {
+		if _, err := New(Config{Name: "X", DataDir: t.TempDir(), Bypass: map[string]http.Handler{p: http.NotFoundHandler()}}); err == nil {
+			t.Errorf("%q was accepted as a bypass path", p)
+		}
+	}
+
+	b := newApp(t, Config{AdminPassword: "correct horse battery"})
+	if w := do(t, b.Handler(), "POST", "/api/setup/password", `{"password":"another long one"}`, nil); w.Code != 409 {
+		t.Errorf("a first password over a set one: %d", w.Code)
+	}
+	if limitKey("2001:db8:1:2:3:4:5:6") != limitKey("2001:db8:1:2:ffff::1") || limitKey("2001:db8:1:3::1") == limitKey("2001:db8:1:2::1") {
+		t.Error("IPv6 clients are not limited by their /64")
+	}
+	if limitKey("192.0.2.1") != "192.0.2.1" {
+		t.Error(limitKey("192.0.2.1"))
 	}
 }

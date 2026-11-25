@@ -214,13 +214,15 @@ type process struct {
 }
 
 // childEnv is the app's environment for cloudflared, without anything that
-// would change how cloudflared runs, and with the tunnel token: the
-// environment is not visible to other users the way a command line is.
-func childEnv(tunnelToken string) []string {
+// would change how cloudflared runs, without the app's own variables (its
+// admin password and secret key among them: prefix is "INVENTORY_"), and
+// with the tunnel token: the environment is not visible to other users the
+// way a command line is.
+func childEnv(tunnelToken, prefix string) []string {
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, _ := strings.Cut(kv, "=")
-		if strings.HasPrefix(k, "TUNNEL_") {
+		if strings.HasPrefix(k, "TUNNEL_") || (prefix != "" && strings.HasPrefix(k, prefix)) {
 			continue
 		}
 		env = append(env, kv)
@@ -247,7 +249,7 @@ func (s *Service) start(ctx context.Context, cfg runConfig) (*process, error) {
 		return nil, err
 	}
 	cmd := exec.Command(binary, "tunnel", "--no-autoupdate", "--metrics", metrics, "run")
-	cmd.Env = childEnv(cfg.tunnelToken)
+	cmd.Env = childEnv(cfg.tunnelToken, s.envPrefix)
 	configureProc(cmd)
 	pr, pw := io.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw

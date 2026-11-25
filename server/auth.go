@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
@@ -126,11 +127,18 @@ func (a *auth) hasPassword() bool {
 	return err == nil
 }
 
+// hash is hashPassword within the bound on Argon2 runs at once.
+func hash(pw string) passwordHash {
+	hashing <- struct{}{}
+	defer func() { <-hashing }()
+	return hashPassword(pw)
+}
+
 func (a *auth) setPassword(pw string) error {
 	if err := checkNewPassword(pw); err != nil {
 		return err
 	}
-	raw, err := json.Marshal(hashPassword(pw))
+	raw, err := json.Marshal(hash(pw))
 	if err != nil {
 		return err
 	}
@@ -143,7 +151,11 @@ func (a *auth) setFirstPassword(pw string) (bool, error) {
 	if err := checkNewPassword(pw); err != nil {
 		return false, err
 	}
-	raw, err := json.Marshal(hashPassword(pw))
+	// Set already: no hash is spent on a request that cannot win.
+	if a.hasPassword() {
+		return false, nil
+	}
+	raw, err := json.Marshal(hash(pw))
 	if err != nil {
 		return false, err
 	}
@@ -175,6 +187,7 @@ func (a *auth) verify(pw string) bool {
 // to 15 minutes. The attempt counts before the password is checked, so
 // guesses sent in parallel cannot all slip through; success forgets it.
 func (a *auth) limited(ip string) time.Duration {
+	ip = limitKey(ip)
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	now := a.now()
@@ -197,10 +210,11 @@ func (a *auth) limited(ip string) time.Duration {
 		}
 		at.until = now.Add(d)
 	}
-	// Keep the map small: forget clients that went quiet.
+	// Keep the map small: forget clients that went quiet, and past a hard
+	// cap those that are not waiting out a pause.
 	if len(a.attempts) > 1000 {
 		for k, v := range a.attempts {
-			if now.Sub(v.last) > time.Hour {
+			if now.Sub(v.last) > time.Hour || (len(a.attempts) > 10000 && !v.until.After(now)) {
 				delete(a.attempts, k)
 			}
 		}
@@ -208,7 +222,17 @@ func (a *auth) limited(ip string) time.Duration {
 	return 0
 }
 
+// limitKey is what the login limit counts by: the address, and for IPv6 its
+// /64, which one client usually holds whole.
+func limitKey(ip string) string {
+	if parsed := net.ParseIP(ip); parsed != nil && parsed.To4() == nil {
+		return parsed.Mask(net.CIDRMask(64, 128)).String() + "/64"
+	}
+	return ip
+}
+
 func (a *auth) succeeded(ip string) {
+	ip = limitKey(ip)
 	a.mu.Lock()
 	delete(a.attempts, ip)
 	a.mu.Unlock()
@@ -385,6 +409,15 @@ func (a *App) firstPassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusForbidden, "Set the password on the local address.")
 		return
 	}
+	if a.auth.hasPassword() {
+		WriteError(w, http.StatusConflict, "A password was set already. Sign in with it.")
+		return
+	}
+	ip := clientIP(r)
+	if d := a.auth.limited(ip); d > 0 {
+		WriteError(w, http.StatusTooManyRequests, "Too many attempts. Wait "+roundWait(d.Seconds())+" and try again.")
+		return
+	}
 	var req passwordReq
 	if !Decode(w, r, &req) {
 		return
@@ -401,7 +434,8 @@ func (a *App) firstPassword(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusConflict, "A password was set already. Sign in with it.")
 		return
 	}
-	a.logf("The admin password was set by the first visitor (%s)", clientIP(r))
+	a.auth.succeeded(ip)
+	a.logf("The admin password was set by the first visitor (%s)", ip)
 	a.auth.startSession(w, r)
 	WriteJSON(w, http.StatusOK, map[string]bool{"signedIn": true})
 }

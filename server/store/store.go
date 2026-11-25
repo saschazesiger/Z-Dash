@@ -54,7 +54,9 @@ func Open(path string, migrations ...Migration) (*Store, error) {
 	q.Add("_pragma", "synchronous(FULL)")
 	q.Add("_pragma", "busy_timeout(10000)")
 	q.Add("_pragma", "foreign_keys(ON)")
-	db, err := sql.Open("sqlite", "file:"+path+"?"+q.Encode())
+	// The path as a URI path: a "?" or "#" in a directory name must not
+	// end it.
+	db, err := sql.Open("sqlite", "file:"+(&url.URL{Path: path}).EscapedPath()+"?"+q.Encode())
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +108,10 @@ func (s *Store) DB() *sql.DB { return s.db }
 func (s *Store) Close() error { return s.db.Close() }
 
 // Tx runs fn in a transaction, committed when fn returns nil.
+//
+// The database has one connection, so inside fn use only tx: a call of
+// Get, Set or DB() there waits for the connection fn holds, for ever. Keep
+// transactions short; the server's own sign-in reads the database too.
 func (s *Store) Tx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {

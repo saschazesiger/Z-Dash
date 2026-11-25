@@ -1,6 +1,9 @@
 package cloudflare
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+
 	"bytes"
 	"context"
 	"net/http"
@@ -34,6 +37,13 @@ func fakeBinary(version string) []byte {
 	return buf.Bytes()
 }
 
+// sumsOf pins the checksum of payload for this architecture's asset.
+func sumsOf(payload []byte) map[string]string {
+	asset, _ := assetFor(runtime.GOARCH)
+	sum := sha256.Sum256(payload)
+	return map[string]string{asset: hex.EncodeToString(sum[:])}
+}
+
 func releaseServer(t *testing.T, payload []byte, hits *atomic.Int32) *httptest.Server {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +67,7 @@ func TestInstallerDownloadsAndVerifies(t *testing.T) {
 
 	installer := NewInstaller(filepath.Join(t.TempDir(), "bin"))
 	installer.BaseURL = server.URL
+	installer.Sums = sumsOf(payload)
 
 	var progress []string
 	path, err := installer.Ensure(context.Background(), func(line string) { progress = append(progress, line) })
@@ -93,6 +104,7 @@ func TestInstallerRejectsSomethingElse(t *testing.T) {
 
 	installer := NewInstaller(filepath.Join(t.TempDir(), "bin"))
 	installer.BaseURL = server.URL
+	installer.Sums = sumsOf(other)
 	if _, err := installer.Ensure(context.Background(), nil); err == nil {
 		t.Fatal("a binary that is not cloudflared must be rejected")
 	}
@@ -154,6 +166,7 @@ func TestServiceInstallsCloudflaredOnDemand(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "bin")
 	s := New(Options{KV: &memKV{m: map[string]string{}}, Sealer: fakeSealer{}, Origin: testOrigin, BinDir: dir})
 	s.installer.BaseURL = server.URL
+	s.installer.Sums = sumsOf(releasePayload(t, "9.9.9"))
 	if b := s.Status().Cloudflared; b.Installed {
 		t.Fatalf("cloudflared = %+v before the download", b)
 	}
@@ -170,5 +183,33 @@ func TestServiceInstallsCloudflaredOnDemand(t *testing.T) {
 	}
 	if logs := strings.Join(s.Status().Logs, "\n"); !strings.Contains(logs, "downloading") {
 		t.Errorf("the download should be in the log: %s", logs)
+	}
+}
+
+// A download whose checksum is not the pinned one is never made executable.
+func TestInstallerRejectsAnotherChecksum(t *testing.T) {
+	payload := releasePayload(t, "9.9.9")
+	server := releaseServer(t, payload, nil)
+	installer := NewInstaller(filepath.Join(t.TempDir(), "bin"))
+	installer.BaseURL = server.URL
+	installer.Sums = sumsOf([]byte("something else"))
+	if _, err := installer.Ensure(context.Background(), nil); err == nil || !strings.Contains(err.Error(), "SHA-256") {
+		t.Fatalf("err = %v", err)
+	}
+	if installer.Installed() {
+		t.Error("a file with another checksum was installed")
+	}
+	installer.Sums = nil
+	if _, err := installer.Ensure(context.Background(), nil); err == nil {
+		t.Error("an asset without a checksum was installed")
+	}
+}
+
+func TestPinnedSumsCoverEveryAsset(t *testing.T) {
+	for _, arch := range []string{"amd64", "arm64", "arm", "386"} {
+		asset, _ := assetFor(arch)
+		if len(Sums[asset]) != 64 {
+			t.Errorf("no checksum for %s", asset)
+		}
 	}
 }

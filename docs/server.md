@@ -72,7 +72,9 @@ func main() {
 }
 ```
 
-`web/` holds the app's `index.html`, its scripts and its stylesheet. The page loads Z-Dash and the shell from the
+`web/` holds the app's `index.html`, its scripts and its stylesheet. They are served to anybody who reaches the local
+listener (through the tunnel: after the Access login), signed in or not, so they hold no data: data comes from the
+API. The page loads Z-Dash and the shell from the
 server, lays out its frame with the documented markup ([Components](components.md)) and starts the shell, which
 signs the person in before the app draws anything. [`server/example/`](../server/example/main.go) is a complete app of this
 kind (a list of devices); copy it to start.
@@ -82,8 +84,13 @@ kind (a list of devices); copy it to start.
 | Method | What it registers |
 |---|---|
 | `app.Handle(pattern, h)`, `app.HandleFunc(pattern, f)` | a route for signed-in people; a request that changes something must also pass the CSRF guard (the shell's `api.js` sends the header `X-Z-Dash: 1`). `pattern` is a `net/http` pattern: `"GET /api/devices/{id}"` |
-| `app.Public(pattern, f)` | a route anybody may call, still behind the CSRF guard |
+| `app.Public(pattern, f)` | a route anybody on the local network may call, still behind the CSRF guard; through the tunnel it needs the Cloudflare Access login like every route that is not a bypass path |
+| `app.Unguarded(pattern, f)` | no sign-in and no CSRF guard: a page that takes a plain form post or a navigation from another site; the handler checks its caller itself |
 | `Config.Bypass` | handlers Cloudflare Access lets through without a login, by path (`"/webhook"`): no CSRF guard, no sign-in; each checks its caller itself (a signature, a token of its own) |
+
+A route that conflicts with the server's own (`/api/session`, `/z-dash/`, a bypass path, the files at `/`) or with
+another route panics where it is registered, as `net/http` does. The database has one connection: inside
+`app.Store().Tx` use only the transaction it hands over.
 
 Helpers for handlers: `server.Who(r)` (`Via` is `"local"` or `"tunnel"`, `Email` the Access address),
 `server.WriteJSON`, `server.WriteError` (a sentence the shell shows), `server.WriteFieldError` (an error under one

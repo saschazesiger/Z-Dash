@@ -223,6 +223,7 @@ type App struct {
 	routes []route
 	local  *http.ServeMux
 	tunnel *http.ServeMux
+	probe  *http.ServeMux // the routes so far, to find a conflict as it is registered
 	built  bool
 
 	assets *assets // the app's files
@@ -262,9 +263,8 @@ func New(cfg Config) (*App, error) {
 		return nil, fmt.Errorf("the data directory %s cannot be created: %w", cfg.DataDir, err)
 	}
 	for path := range cfg.Bypass {
-		if !strings.HasPrefix(path, "/") || strings.Trim(path, "/") == "" || strings.HasPrefix(path, "/api/") ||
-			strings.HasPrefix(path, "/z-dash/") {
-			return nil, fmt.Errorf("server: %q cannot be a bypass path", path)
+		if err := checkBypass(path); err != nil {
+			return nil, err
 		}
 	}
 	a := &App{cfg: cfg, logf: cfg.Logf, hub: newHub(), startedAt: time.Now()}
@@ -287,12 +287,14 @@ func New(cfg Config) (*App, error) {
 	}
 	a.auth = newAuth(a.kv, cookieName(cfg.Slug), a.logf)
 	if cfg.AdminPassword != "" {
+		// A password that cannot be set must stop the start: otherwise the
+		// first visitor would set one.
 		if err := a.auth.setPassword(cfg.AdminPassword); err != nil {
-			a.logf("%s_ADMIN_PASSWORD: %v", cfg.Env, err)
-		} else {
-			a.auth.dropSessions("")
-			a.logf("The admin password was set from %s_ADMIN_PASSWORD; everybody was signed out", cfg.Env)
+			a.close()
+			return nil, fmt.Errorf("%s_ADMIN_PASSWORD cannot be the admin password: %w", cfg.Env, err)
 		}
+		a.auth.dropSessions("")
+		a.logf("The admin password was set from %s_ADMIN_PASSWORD; everybody was signed out", cfg.Env)
 	}
 	bypass := make([]string, 0, len(cfg.Bypass))
 	for path := range cfg.Bypass {
@@ -334,6 +336,7 @@ func (a *App) newTunnel(bypass []string) *cloudflare.Service {
 		BypassLabel:     cfg.BypassLabel,
 		SessionDuration: cfg.AccessSession,
 		Command:         cfg.Cloudflared,
+		EnvPrefix:       cfg.Env + "_",
 		Logf:            a.logf,
 	})
 }
@@ -374,12 +377,36 @@ func (a *App) Public(pattern string, h http.HandlerFunc) {
 	a.add(pattern, a.guard(h))
 }
 
+// Unguarded registers a route without the sign-in and without the CSRF
+// guard: a page that takes a plain form post or a navigation from another
+// site (a demo's stand-in pages, an OAuth return). The handler checks its
+// caller itself. Through the tunnel it still needs the Cloudflare Access
+// login, like every route that is not a bypass path.
+func (a *App) Unguarded(pattern string, h http.HandlerFunc) {
+	a.add(pattern, h)
+}
+
+// add keeps a route for both listeners. It is tried on a mux with the
+// server's own routes at once, so a pattern that conflicts with them (or
+// with another route) panics here, at its registration, as ServeMux does,
+// rather than at Run.
 func (a *App) add(pattern string, h http.Handler) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.built {
 		panic("server: routes must be registered before Run or Handler")
 	}
+	if a.probe == nil {
+		a.probe = a.baseMux()
+	}
+	func() {
+		defer func() {
+			if v := recover(); v != nil {
+				panic(fmt.Sprintf("server: the route %q cannot be registered: %v", pattern, v))
+			}
+		}()
+		a.probe.Handle(pattern, h)
+	}()
 	a.routes = append(a.routes, route{pattern, h})
 }
 
@@ -392,7 +419,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Listen, err)
 	}
 	listeners := []net.Listener{ln}
-	servers := []*http.Server{{Handler: local, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute}}
+	servers := []*http.Server{{Handler: local, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute}}
 	// A stand-in tunnel (a demo) has no origin: nothing reaches it, so
 	// nothing listens for it.
 	where := "no tunnel listener (" + a.cfg.Name + " runs with a stand-in tunnel)"
@@ -403,7 +430,7 @@ func (a *App) Run(ctx context.Context) error {
 			return err
 		}
 		listeners = append(listeners, tln)
-		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute})
+		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute})
 		where = "the tunnel reaches it at " + a.cf.Origin()
 	}
 	errs := make(chan error, len(listeners))
@@ -494,6 +521,29 @@ func listenUnix(path string) (net.Listener, error) {
 		return nil, err
 	}
 	return ln, nil
+}
+
+// checkBypass refuses a bypass path that would take the server's own paths
+// or more than the app means: it is one or more plain segments ("/webhook",
+// "/hooks/github"), below none of the server's roots.
+func checkBypass(path string) error {
+	p := strings.TrimSuffix(path, "/")
+	if !strings.HasPrefix(p, "/") || strings.ContainsAny(p, "{}*?#%. \t") || strings.Contains(p, "//") {
+		return fmt.Errorf("server: %q cannot be a bypass path: use a plain path such as /webhook", path)
+	}
+	for _, root := range []string{"/api", "/z-dash", "/healthz"} {
+		if p == root || strings.HasPrefix(p, root+"/") {
+			return fmt.Errorf("server: %q cannot be a bypass path: %s belongs to the server", path, root)
+		}
+	}
+	return nil
+}
+
+// close releases what New opened, when New fails after opening it.
+func (a *App) close() {
+	if a.db != nil {
+		a.db.Close()
+	}
 }
 
 // slugOf makes a slug of a name: "My App" -> "my-app".

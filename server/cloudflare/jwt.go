@@ -1,6 +1,7 @@
 package cloudflare
 
 import (
+	"context"
 	"crypto"
 	"crypto/rsa"
 	"crypto/sha256"
@@ -116,22 +117,35 @@ func decodePart(p string, v any) error {
 // key returns the signing key with that id, fetching the key set when the
 // id is unknown or the set is old. Fetches are at least KeysMinRefresh apart
 // so a flood of tokens with made-up ids cannot make us hammer Cloudflare.
+//
+// The fetch runs outside the cache's lock: while Cloudflare is slow to
+// answer, tokens signed with a key already known keep passing, and only one
+// request waits for the fetch (fetchMu); the others that need it see the
+// attempt and use what is cached.
 func (s *Service) key(team, kid string) (*rsa.PublicKey, error) {
 	s.keyMu.Lock()
-	defer s.keyMu.Unlock()
 	now := s.now()
 	if s.keysTeam != team {
 		s.keys, s.keysTeam, s.keysAt, s.keysTryAt = nil, team, time.Time{}, time.Time{}
 	}
 	k, known := s.keys[kid]
 	stale := now.Sub(s.keysAt) > s.KeysMaxAge
-	if (!known || stale) && now.Sub(s.keysTryAt) >= s.KeysMinRefresh {
+	fetch := (!known || stale) && now.Sub(s.keysTryAt) >= s.KeysMinRefresh
+	if fetch {
 		s.keysTryAt = now
+	}
+	s.keyMu.Unlock()
+	if fetch && s.fetchMu.TryLock() {
 		keys, err := s.fetchKeys(team)
+		s.fetchMu.Unlock()
 		if err != nil {
 			s.logf("cloudflare: cannot fetch the Access signing keys: %v", err)
 		} else {
-			s.keys, s.keysAt = keys, now
+			s.keyMu.Lock()
+			if s.keysTeam == team {
+				s.keys, s.keysAt = keys, s.now()
+			}
+			s.keyMu.Unlock()
 			k, known = keys[kid]
 		}
 	}
@@ -142,7 +156,13 @@ func (s *Service) key(team, kid string) (*rsa.PublicKey, error) {
 }
 
 func (s *Service) fetchKeys(team string) (map[string]*rsa.PublicKey, error) {
-	resp, err := s.HTTP.Get(s.CertsURL(team))
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, s.CertsURL(team), nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := s.HTTP.Do(req)
 	if err != nil {
 		return nil, err
 	}

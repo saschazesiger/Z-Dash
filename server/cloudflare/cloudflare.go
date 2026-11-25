@@ -177,7 +177,10 @@ type Options struct {
 	// Command is the cloudflared to run, "cloudflared" (from the PATH) when
 	// empty; when it is not found, the copy in BinDir is used.
 	Command string
-	Logf    func(string, ...any)
+	// EnvPrefix is the prefix of the app's own environment variables
+	// ("INVENTORY_"); cloudflared does not inherit them.
+	EnvPrefix string
+	Logf      func(string, ...any)
 }
 
 // Service is the Cloudflare tunnel of the app.
@@ -191,6 +194,7 @@ type Service struct {
 	bypass          []string
 	bypassLabel     string
 	sessionDuration string
+	envPrefix       string
 
 	// API is the base URL of the Cloudflare API.
 	API string
@@ -234,7 +238,8 @@ type Service struct {
 	job         Job
 	logs        *ring
 
-	keyMu     sync.Mutex // serialises fetching of the Access keys
+	keyMu     sync.Mutex // guards the cached Access keys
+	fetchMu   sync.Mutex // one fetch of the Access keys at a time
 	keys      map[string]*rsa.PublicKey
 	keysTeam  string
 	keysAt    time.Time
@@ -275,7 +280,7 @@ func New(o Options) *Service {
 	}
 	s := &Service{
 		kv: o.KV, sealer: o.Sealer, origin: o.Origin, logf: logf,
-		name: name, slug: slug, bypass: bypass, bypassLabel: label, sessionDuration: duration,
+		name: name, slug: slug, bypass: bypass, bypassLabel: label, sessionDuration: duration, envPrefix: o.EnvPrefix,
 		API:       "https://api.cloudflare.com/client/v4",
 		Command:   command,
 		installer: NewInstaller(o.BinDir),

@@ -240,9 +240,6 @@ func (s *Service) Setup(ctx context.Context, req SetupRequest) (err error) {
 	if _, err := s.resolve(ctx); err != nil {
 		return fmt.Errorf("cloudflared is needed for the tunnel and could not be found or downloaded: %w", err)
 	}
-	if err := s.save(cur, map[string]string{secretAPIToken: token}); err != nil {
-		return err
-	}
 
 	s.progress("Checking Cloudflare Zero Trust")
 	team, err := s.teamDomain(ctx, token, acct)
@@ -260,6 +257,12 @@ func (s *Service) Setup(ctx context.Context, req SetupRequest) (err error) {
 		return &ConflictError{Conflicts: conflicts}
 	}
 	if err := s.ensureOTP(ctx, token, acct); err != nil {
+		return err
+	}
+	// Only now, with the token proven on Zero Trust and the name free, are
+	// the token and the new account kept: a setup that stops before this
+	// leaves a running tunnel and the token it runs with as they were.
+	if err := s.save(cur, map[string]string{secretAPIToken: token}); err != nil {
 		return err
 	}
 
