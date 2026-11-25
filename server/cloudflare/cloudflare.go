@@ -411,23 +411,23 @@ type Binary struct {
 	Version    string `json:"version"`
 	Path       string `json:"path"`
 	Managed    bool   `json:"managed"` // the copy the app downloaded
-	CanInstall bool   `json:"can_install"`
+	CanInstall bool   `json:"canInstall"`
 }
 
 // Status is what the interface shows.
 type Status struct {
 	Configured  bool     `json:"configured"`
 	Hostname    string   `json:"hostname"`
-	PublicURL   string   `json:"public_url"`
+	PublicURL   string   `json:"publicUrl"`
 	Emails      []string `json:"emails"`
 	Account     string   `json:"account"`
 	Zone        string   `json:"zone"`
-	ZoneID      string   `json:"zone_id"`
+	ZoneID      string   `json:"zoneId"`
 	Running     bool     `json:"running"`
 	Connected   bool     `json:"connected"`
 	Verified    bool     `json:"verified"`
 	Downloading bool     `json:"downloading"`
-	HasToken    bool     `json:"has_token"`
+	HasToken    bool     `json:"hasToken"`
 	// Partial is a setup that stopped half way, or a removal that could not
 	// delete everything: there are objects on Cloudflare, but no tunnel runs.
 	Partial     bool     `json:"partial"`
@@ -520,8 +520,8 @@ func (s *Service) resolve(ctx context.Context) (string, error) {
 type Zone struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`
-	AccountID   string `json:"account_id"`
-	AccountName string `json:"account_name"`
+	AccountID   string `json:"accountId"`
+	AccountName string `json:"accountName"`
 }
 
 // TokenInfo is what a checked token may do.

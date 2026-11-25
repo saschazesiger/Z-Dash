@@ -62,8 +62,8 @@ func (e verifyError) Unwrap() error { return e.error }
 
 // SetupRequest is what the person entered.
 type SetupRequest struct {
-	APIToken string   `json:"api_token"` // empty: the stored one
-	ZoneID   string   `json:"zone_id"`
+	APIToken string   `json:"apiToken"` // empty: the stored one
+	ZoneID   string   `json:"zoneId"`
 	Hostname string   `json:"hostname"`
 	Emails   []string `json:"emails"`
 	// Replace lets the setup delete a DNS record or an Access application
