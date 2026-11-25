@@ -224,7 +224,10 @@ type App struct {
 	local  *http.ServeMux
 	tunnel *http.ServeMux
 	probe  *http.ServeMux // the routes so far, to find a conflict as it is registered
-	built  bool
+	// unguarded holds the patterns of Unguarded, to let them past the Host
+	// check.
+	unguarded *http.ServeMux
+	built     bool
 
 	assets *assets // the app's files
 	zdash  *assets // Z-Dash and the shell
@@ -377,13 +380,21 @@ func (a *App) Public(pattern string, h http.HandlerFunc) {
 	a.add(pattern, a.guard(h))
 }
 
-// Unguarded registers a route without the sign-in and without the CSRF
-// guard: a page that takes a plain form post or a navigation from another
-// site (a demo's stand-in pages, an OAuth return). The handler checks its
-// caller itself. Through the tunnel it still needs the Cloudflare Access
+// Unguarded registers a route without the sign-in, without the CSRF guard
+// and without the local listener's Host check: a page that takes a plain
+// form post or a navigation from another site (a demo's stand-in pages, an
+// OAuth return), or an API with keys of its own that clients call by any
+// name. The handler checks its caller itself; it must not rely on the
+// session cookie. Through the tunnel it still needs the Cloudflare Access
 // login, like every route that is not a bypass path.
 func (a *App) Unguarded(pattern string, h http.HandlerFunc) {
 	a.add(pattern, h)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.unguarded == nil {
+		a.unguarded = http.NewServeMux()
+	}
+	a.unguarded.Handle(pattern, http.NotFoundHandler())
 }
 
 // add keeps a route for both listeners. It is tried on a mux with the

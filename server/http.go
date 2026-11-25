@@ -203,7 +203,7 @@ func (a *App) headers(next http.Handler) http.Handler {
 // names are listed in Config.Hosts.
 func (a *App) localHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !localName(r.Host, a.cfg.Hosts) {
+		if !localName(r.Host, a.cfg.Hosts) && !a.isUnguarded(r) {
 			a.setSecurityHeaders(w)
 			http.Error(w, a.cfg.Name+" does not know the name "+strconv.Quote(r.Host)+". Open it by its IP address, "+
 				"or add the name to the environment variable "+a.cfg.Env+"_HOSTS.", http.StatusForbidden)
@@ -211,6 +211,15 @@ func (a *App) localHost(next http.Handler) http.Handler {
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// isUnguarded reports whether a request goes to a route of Unguarded.
+func (a *App) isUnguarded(r *http.Request) bool {
+	if a.unguarded == nil {
+		return false
+	}
+	_, pattern := a.unguarded.Handler(r)
+	return pattern != ""
 }
 
 func localName(hostport string, extra []string) bool {

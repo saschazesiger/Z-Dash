@@ -488,3 +488,19 @@ func TestHardening(t *testing.T) {
 		t.Error(limitKey("192.0.2.1"))
 	}
 }
+
+// An unguarded route answers under any host name (an API with keys of its
+// own); everything else keeps the Host check.
+func TestUnguardedSkipsTheHostCheck(t *testing.T) {
+	a := newApp(t, Config{})
+	a.Unguarded("/v1/", func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "model") })
+	h := a.Handler()
+	for path, want := range map[string]int{"/v1/models": 200, "/api/session": 403, "/": 403} {
+		r := httptest.NewRequest("GET", "http://models.example.com"+path, nil)
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("%s under a public name: %d, want %d", path, w.Code, want)
+		}
+	}
+}
