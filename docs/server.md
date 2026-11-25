@@ -126,6 +126,7 @@ app's name (`Inventory` reads `INVENTORY_DATA` ...; `Config.Env` sets another).
 | `Open` | `_OPEN=1` | | everybody is signed in: demos and tests only |
 | `Bypass`, `BypassLabel` | | | paths without the Access login (above) and what they are, for their Access policy's name |
 | `AccessSession` | | `24h` | how long a Cloudflare Access login lasts |
+| `ReadTimeout` | | a minute | how long a request may take to arrive, body included; more for large uploads over slow links, negative for no bound |
 | `Assets` | | | the app's files at `/` |
 | `CSP` | | | sources to add, by directive: `{"form-action": "https://github.com"}` |
 | `Migrations` | | | the app's tables |

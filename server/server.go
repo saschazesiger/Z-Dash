@@ -100,6 +100,11 @@ type Config struct {
 	// "720h"; default 24h).
 	AccessSession string
 
+	// ReadTimeout bounds how long a request may take to arrive, body
+	// included (default a minute). An app that takes large uploads over slow
+	// links (a model API) sets more; a negative value sets no bound.
+	ReadTimeout time.Duration
+
 	// Assets are the app's own files, served at / (index.html for /). Nil
 	// serves only Z-Dash, the shell and the API.
 	Assets fs.FS
@@ -255,6 +260,12 @@ func New(cfg Config) (*App, error) {
 	}
 	if cfg.Version == "" {
 		cfg.Version = "dev"
+	}
+	switch {
+	case cfg.ReadTimeout == 0:
+		cfg.ReadTimeout = time.Minute
+	case cfg.ReadTimeout < 0:
+		cfg.ReadTimeout = 0 // net/http: no bound
 	}
 	if (cfg.KV == nil) != (cfg.Sealer == nil) {
 		return nil, errors.New("server: set both KV and Sealer, or neither")
@@ -430,7 +441,7 @@ func (a *App) Run(ctx context.Context) error {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Listen, err)
 	}
 	listeners := []net.Listener{ln}
-	servers := []*http.Server{{Handler: local, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute}}
+	servers := []*http.Server{{Handler: local, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: a.cfg.ReadTimeout, IdleTimeout: 2 * time.Minute}}
 	// A stand-in tunnel (a demo) has no origin: nothing reaches it, so
 	// nothing listens for it.
 	where := "no tunnel listener (" + a.cfg.Name + " runs with a stand-in tunnel)"
@@ -441,7 +452,7 @@ func (a *App) Run(ctx context.Context) error {
 			return err
 		}
 		listeners = append(listeners, tln)
-		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: time.Minute, IdleTimeout: 2 * time.Minute})
+		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: a.cfg.ReadTimeout, IdleTimeout: 2 * time.Minute})
 		where = "the tunnel reaches it at " + a.cf.Origin()
 	}
 	errs := make(chan error, len(listeners))
