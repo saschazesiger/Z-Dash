@@ -310,7 +310,10 @@ func TestFromEnv(t *testing.T) {
 
 func TestStoreMigrations(t *testing.T) {
 	dir := t.TempDir()
-	m1 := func(tx *sql.Tx) error { _, err := tx.Exec(`CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT)`); return err }
+	m1 := func(tx *sql.Tx) error {
+		_, err := tx.Exec(`CREATE TABLE devices (id INTEGER PRIMARY KEY, name TEXT)`)
+		return err
+	}
 	m2 := func(tx *sql.Tx) error { _, err := tx.Exec(`ALTER TABLE devices ADD COLUMN room TEXT`); return err }
 	s, err := store.Open(dir+"/x.db", m1)
 	if err != nil {
