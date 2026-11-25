@@ -300,13 +300,23 @@ func (a *auth) saveLocked() {
 	}
 }
 
+// HasPassword reports whether the admin password is set (the first visitor
+// sets it on the local listener).
+func (a *App) HasPassword() bool { return a.auth.hasPassword() }
+
 // --- handlers ----------------------------------------------------------------
 
 // SessionInfo is what GET /api/session answers; the shell starts from it.
 type SessionInfo struct {
-	Name     string `json:"name"`
-	Version  string `json:"version"`
-	SignedIn bool   `json:"signedIn"`
+	Name    string `json:"name"`
+	Version string `json:"version"`
+	// Env is the prefix of the app's environment variables ("INVENTORY"),
+	// for hints such as INVENTORY_ADMIN_PASSWORD.
+	Env string `json:"env"`
+	// Pages: the app has pages of its own at /; without them / leads to the
+	// shell's settings.
+	Pages    bool `json:"pages"`
+	SignedIn bool `json:"signedIn"`
 	// NeedsPassword: first run on the local listener, nobody set the
 	// password yet; the shell asks for one.
 	NeedsPassword bool   `json:"needsPassword"`
@@ -322,7 +332,8 @@ type SessionInfo struct {
 
 func (a *App) session(w http.ResponseWriter, r *http.Request) {
 	id := Who(r)
-	info := SessionInfo{Name: a.cfg.Name, Version: a.cfg.Version, Via: id.Via, Email: id.Email, Open: a.cfg.Open}
+	info := SessionInfo{Name: a.cfg.Name, Version: a.cfg.Version, Env: a.cfg.Env, Pages: a.assets != nil,
+		Via: id.Via, Email: id.Email, Open: a.cfg.Open}
 	info.SignedIn = a.SignedIn(r)
 	if id.Via == "local" && !a.cfg.Open {
 		info.NeedsPassword = !a.auth.hasPassword()

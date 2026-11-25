@@ -95,7 +95,7 @@ The server's own routes:
 | Route | |
 |---|---|
 | `GET /healthz` | `ok` while the process serves |
-| `GET /api/session` | `{name, version, signedIn, needsPassword, via, email, open, tunnel, logout}` |
+| `GET /api/session` | `{name, version, env, pages, signedIn, needsPassword, via, email, open, tunnel, logout}` |
 | `POST /api/setup/password`, `POST /api/login`, `POST /api/logout`, `POST /api/password` | the first password, sign-in (five tries, then a wait that doubles from 30 seconds to 15 minutes), sign-out (`next` is Cloudflare Access's logout through the tunnel), a new password (signs every other browser out) |
 | `GET /api/events` | the event stream: `change` with `{"topics": [...]}` |
 | `GET /api/cloudflare`, `POST /api/cloudflare/check`, `POST /api/cloudflare/setup`, `PUT /api/cloudflare/emails`, `DELETE /api/cloudflare` | the tunnel: its state and job, a token's domains, the setup (in the background), who may sign in, the removal |
@@ -143,9 +143,42 @@ request, so a person taken off the list is out at once.
 
 ## The shell
 
-The shell is plain ES modules on Z-Dash, served at `/z-dash/server/`. Its page `/z-dash/server/` is the server's
-settings (tunnel and password) for apps that have none of their own; an app with a settings page of its own mounts
-the same parts there. `server/zdash/shell/` documents each module in its header.
+The shell is plain ES modules on Z-Dash, served at `/z-dash/server/` from `server/zdash/shell/`. An app's
+`index.html` loads Z-Dash from the server, holds its own layout with the documented markup, hidden until someone is
+signed in, and starts the shell:
+
+```html
+<link rel="stylesheet" href="/z-dash/fonts/fonts.css">
+<link rel="stylesheet" href="/z-dash/ds.min.css">
+<link rel="stylesheet" href="/z-dash/themes/dark.css" media="(prefers-color-scheme: dark)">
+<script src="/z-dash/ds.min.js" defer></script>
+<script type="module" src="app.js"></script>
+...
+<div class="ds-app ds-app--drawer" data-ds-shell="inventory" hidden>
+  ... <span class="ds-brand__name" data-zs-name></span> ... <div class="ds-account ds-account--capsule" data-zs-account></div> ...
+</div>
+<div class="ds-toasts"></div>
+```
+
+```js
+import { start, on } from '/z-dash/server/shell.js';
+import { get } from '/z-dash/server/api.js';
+
+await start();          // the sign-in or first-password card until someone is signed in
+on('devices', load);    // the server's Notify("devices"), from any browser
+load();
+```
+
+| Module | Exports |
+|---|---|
+| `shell.js` | `start({ onReady })` (the session once someone is signed in; fills `[data-zs-name]`, `[data-zs-version]` and the `.ds-account[data-zs-account]` capsule with its sign-out, shows `body > .ds-app`, attaches the ripple and the tooltips), `on(topic, fn)` (also after a reconnect or a new sign-in; returns a stop function), `current()`, `signOut()` |
+| `api.js` | `get`, `post`, `put`, `del`, `request` (with the CSRF header; an `ApiError` carries the server's sentence and its `fields`), `whenSignedOut(fn)`, `live(onTopics, onStatus)`, `isOffline`, `errorMessage` |
+| `ui.js` | `html` (escaping), `raw`, `esc`, `icon`, `morph` (`DS.dom.morphHtml`), `faces`, `busy`, `toast`, `confirm`, `alertHtml`, `setFieldError`, `fieldErrors`, `passwordField`, `sentence` |
+| `tunnel.js` | `mountTunnel(host, { level, log, onChange })`: the tunnel's settings in a card of the app's own settings page (with `/z-dash/server/shell.css`) |
+| `password.js` | `mountPassword(host, session)`: the password form |
+
+Its page `/z-dash/server/` is the server's settings (tunnel and password) for apps that have none of their own; link
+it from the drawer. [`server/example/`](../server/example/main.go) uses all of the above.
 
 ## Checking a project
 

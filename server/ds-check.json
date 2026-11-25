@@ -1,0 +1,10 @@
+{
+  "major": 3,
+  "prefix": "zs",
+  "css": ["zdash/shell/**/*.css", "example/web/**/*.css"],
+  "js": ["zdash/shell/**/*.js", "example/web/**/*.js"],
+  "html": ["zdash/shell/**/*.html", "example/web/**/*.html"],
+  "themes": [],
+  "vendor": "zdash/dist",
+  "exceptions": []
+}

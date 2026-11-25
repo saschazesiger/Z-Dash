@@ -1,0 +1,16 @@
+/*
+ * shell.css: the one rule of the server's shell (prefix zs-) that Z-Dash has
+ * no class for. Tokens only, no restyle of a .ds-* component.
+ *
+ *   .zs-break   a URL, host name or path that must wrap anywhere rather than
+ *               push a card wider than a phone (the tunnel's address, the
+ *               conflicts Cloudflare reports)
+ *
+ * A page that mounts the tunnel settings (tunnel.js) links it:
+ *   <link rel="stylesheet" href="/z-dash/server/shell.css">
+ */
+
+.zs-break {
+  overflow-wrap: anywhere;
+  min-width: 0;
+}

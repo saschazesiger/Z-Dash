@@ -1,1 +1,52 @@
-<!doctype html><title>placeholder</title>
+<!doctype html>
+<html lang="en" class="ds-theme ds-base">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title></title>
+<!-- The server settings of every app on the server. Fonts, Z-Dash, the shipped dark theme when the device asks for
+     it, the shell's one helper class; no inline script or style: the Content-Security-Policy forbids them. -->
+<link rel="stylesheet" href="/z-dash/fonts/fonts.css">
+<link rel="stylesheet" href="/z-dash/ds.min.css">
+<link rel="stylesheet" href="/z-dash/themes/dark.css" media="(prefers-color-scheme: dark)">
+<link rel="stylesheet" href="/z-dash/server/shell.css">
+<script src="/z-dash/ds.min.js" defer></script>
+<script type="module" src="/z-dash/server/settings.js"></script>
+</head>
+<body>
+<!-- Hidden until someone is signed in: shell.js shows the sign-in card meanwhile. -->
+<div class="ds-app" data-ds-shell="zs-settings" hidden>
+  <a class="ds-skip" href="#main">Skip to content</a>
+  <div class="ds-topbar">
+    <a class="ds-brand" href="/"><span class="ds-brand__name" data-zs-name></span></a>
+    <div class="ds-account ds-account--capsule" data-zs-account></div>
+  </div>
+  <div class="ds-panel">
+    <main class="ds-view" id="main" tabindex="-1">
+      <div class="ds-content">
+        <div class="ds-page">
+          <header class="ds-page-head">
+            <a class="ds-btn ds-btn--text ds-sm ds-page-head__back" href="/" data-zs-app-link data-icon="arrowLeft" data-icon-size="18" data-icon-place="start"><span class="ds-sr">Back to </span><span data-zs-name>the app</span></a>
+            <h1 class="ds-page-head__title" tabindex="-1">Server settings</h1>
+            <p class="ds-page-head__lead">How the app is reached from outside and how it signs in. Version <span data-zs-version></span>.</p>
+          </header>
+          <div class="ds-stack">
+            <section class="ds-card" aria-labelledby="zs-tunnel-title">
+              <h2 class="ds-card__title" id="zs-tunnel-title">Remote access</h2>
+              <p class="ds-muted">Reach the app from anywhere through a Cloudflare tunnel: no open port, no router setup. The tunnel, its address and the login are created for you. Through the tunnel, Cloudflare Access signs people in by their e-mail address; the password stays for the local address, which keeps working either way.</p>
+              <div id="zs-tunnel"></div>
+            </section>
+            <section class="ds-card" aria-labelledby="zs-password-title">
+              <h2 class="ds-card__title" id="zs-password-title">Password</h2>
+              <div id="zs-password"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+</div>
+<!-- Right after .ds-app: DS.overlay.toast() shows its snackbars here. -->
+<div class="ds-toasts"></div>
+</body>
+</html>
