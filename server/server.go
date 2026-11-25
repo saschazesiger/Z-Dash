@@ -113,6 +113,9 @@ type Config struct {
 	// box, for an app that keeps its own database. Both or neither.
 	KV     KV
 	Sealer Sealer
+	// Tunnel replaces the Cloudflare tunnel: cloudflare.NewDemo for a demo
+	// or a test, where nothing may reach Cloudflare.
+	Tunnel Tunnel
 
 	// Logf receives diagnostics; nil writes them with the log package.
 	Logf func(format string, args ...any)
@@ -132,6 +135,32 @@ type Sealer interface {
 	Seal(object string, plain []byte) ([]byte, error)
 	Open(object string, sealed []byte) ([]byte, error)
 }
+
+// Tunnel is what the server needs of the Cloudflare tunnel:
+// *cloudflare.Service, or *cloudflare.Demo in a demo.
+type Tunnel interface {
+	Status() cloudflare.Status
+	TokenURL() string
+	BypassPaths() []string
+	Bypassed(path string) bool
+	Check(ctx context.Context, token string) (cloudflare.TokenInfo, error)
+	StartSetup(req cloudflare.SetupRequest) error
+	SetEmails(ctx context.Context, emails []string) error
+	StartRemove() error
+	// Authenticate checks the Cloudflare Access token of a request that
+	// came through the tunnel and returns the address it vouches for.
+	Authenticate(r *http.Request) (string, error)
+	// Allows reports whether an address may still sign in.
+	Allows(email string) bool
+	PublicURL() string
+	Origin() string
+	Run(ctx context.Context)
+}
+
+var (
+	_ Tunnel = (*cloudflare.Service)(nil)
+	_ Tunnel = (*cloudflare.Demo)(nil)
+)
 
 // FromEnv fills the fields of c that are empty from the environment, with
 // the prefix c.Env (made from the slug: "inventory" -> "INVENTORY"):
@@ -186,7 +215,7 @@ type App struct {
 	db     *store.Store // nil when the app brought its own KV
 	kv     KV
 	sealer Sealer
-	cf     *cloudflare.Service
+	cf     Tunnel
 	auth   *auth
 	hub    *hub
 
@@ -269,19 +298,10 @@ func New(cfg Config) (*App, error) {
 	for path := range cfg.Bypass {
 		bypass = append(bypass, path)
 	}
-	a.cf = cloudflare.New(cloudflare.Options{
-		KV:              cfKV{a.kv},
-		Sealer:          a.sealer,
-		Origin:          a.tunnelOrigin(),
-		BinDir:          filepath.Join(cfg.DataDir, "bin"),
-		Name:            cfg.Name,
-		Slug:            cfg.Slug,
-		Bypass:          sortedPaths(bypass),
-		BypassLabel:     cfg.BypassLabel,
-		SessionDuration: cfg.AccessSession,
-		Command:         cfg.Cloudflared,
-		Logf:            a.logf,
-	})
+	a.cf = cfg.Tunnel
+	if a.cf == nil {
+		a.cf = a.newTunnel(bypass)
+	}
 	var err error
 	if cfg.Assets != nil {
 		if a.assets, err = loadAssets(cfg.Assets, ""); err != nil {
@@ -301,6 +321,23 @@ func New(cfg Config) (*App, error) {
 	return a, nil
 }
 
+func (a *App) newTunnel(bypass []string) *cloudflare.Service {
+	cfg := a.cfg
+	return cloudflare.New(cloudflare.Options{
+		KV:              cfKV{a.kv},
+		Sealer:          a.sealer,
+		Origin:          a.tunnelOrigin(),
+		BinDir:          filepath.Join(cfg.DataDir, "bin"),
+		Name:            cfg.Name,
+		Slug:            cfg.Slug,
+		Bypass:          sortedPaths(bypass),
+		BypassLabel:     cfg.BypassLabel,
+		SessionDuration: cfg.AccessSession,
+		Command:         cfg.Cloudflared,
+		Logf:            a.logf,
+	})
+}
+
 // Config is the configuration the app runs with, defaults filled in.
 func (a *App) Config() Config { return a.cfg }
 
@@ -310,8 +347,8 @@ func (a *App) Store() *store.Store { return a.db }
 // Secrets seal and open the app's own secrets.
 func (a *App) Secrets() Sealer { return a.sealer }
 
-// Cloudflare is the tunnel.
-func (a *App) Cloudflare() *cloudflare.Service { return a.cf }
+// Tunnel is the Cloudflare tunnel (or the stand-in of Config.Tunnel).
+func (a *App) Tunnel() Tunnel { return a.cf }
 
 // Logf writes a diagnostic line.
 func (a *App) Logf(format string, args ...any) { a.logf(format, args...) }
@@ -354,17 +391,23 @@ func (a *App) Run(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Listen, err)
 	}
-	tln, err := a.listenTunnel()
-	if err != nil {
-		ln.Close()
-		return err
+	listeners := []net.Listener{ln}
+	servers := []*http.Server{{Handler: local, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute}}
+	// A stand-in tunnel (a demo) has no origin: nothing reaches it, so
+	// nothing listens for it.
+	where := "no tunnel listener (" + a.cfg.Name + " runs with a stand-in tunnel)"
+	if a.cf.Origin() != "" {
+		tln, err := a.listenTunnel()
+		if err != nil {
+			ln.Close()
+			return err
+		}
+		listeners = append(listeners, tln)
+		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute})
+		where = "the tunnel reaches it at " + a.cf.Origin()
 	}
-	servers := []*http.Server{
-		{Handler: local, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute},
-		{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, IdleTimeout: 2 * time.Minute},
-	}
-	errs := make(chan error, 2)
-	for i, l := range []net.Listener{ln, tln} {
+	errs := make(chan error, len(listeners))
+	for i, l := range listeners {
 		go func(srv *http.Server, l net.Listener) {
 			if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errs <- err
@@ -374,7 +417,7 @@ func (a *App) Run(ctx context.Context) error {
 	cfCtx, stopCF := context.WithCancel(context.Background())
 	cfDone := make(chan struct{})
 	go func() { defer close(cfDone); a.cf.Run(cfCtx) }()
-	a.logf("%s %s listens on %s; the tunnel reaches it at %s", a.cfg.Name, a.cfg.Version, ln.Addr(), a.cf.Origin())
+	a.logf("%s %s listens on %s; %s", a.cfg.Name, a.cfg.Version, ln.Addr(), where)
 
 	var runErr error
 	select {

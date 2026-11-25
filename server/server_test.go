@@ -400,3 +400,40 @@ func TestEvents(t *testing.T) {
 		t.Errorf("stream = %q", buf)
 	}
 }
+
+// A demo tunnel runs the whole setup through the API without Cloudflare.
+func TestDemoTunnel(t *testing.T) {
+	demo := cloudflare.NewDemo("Example", nil)
+	demo.Step = time.Millisecond
+	a := newApp(t, Config{Open: true, Tunnel: demo})
+	h := a.Handler()
+	if w := do(t, h, "POST", "/api/cloudflare/check", `{"apiToken":"short"}`, nil); w.Code != 400 || !strings.Contains(w.Body.String(), `"apiToken"`) {
+		t.Fatalf("short token: %d %s", w.Code, w.Body)
+	}
+	body := `{"apiToken":"0123456789abcdefghijkl","zoneId":"zone-example-com","hostname":"app.example.com","emails":["a@example.com"]}`
+	if w := do(t, h, "POST", "/api/cloudflare/setup", body, nil); w.Code != 200 {
+		t.Fatalf("setup: %d %s", w.Code, w.Body)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for demo.Status().Job.Running && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if st := demo.Status(); !st.Configured || !st.Job.OK || st.PublicURL != "https://app.example.com" {
+		t.Fatalf("status = %+v", st)
+	}
+	if info := sessionOf(t, h, nil); info.Tunnel != "https://app.example.com" {
+		t.Errorf("session = %+v", info)
+	}
+	if w := do(t, h, "PUT", "/api/cloudflare/emails", `{"emails":["not an address"]}`, nil); w.Code != 400 {
+		t.Errorf("bad address: %d", w.Code)
+	}
+	if w := do(t, h, "DELETE", "/api/cloudflare", "", nil); w.Code != 200 {
+		t.Fatalf("remove: %d %s", w.Code, w.Body)
+	}
+	for demo.Status().Job.Running && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if st := demo.Status(); st.Configured || !st.Job.OK {
+		t.Fatalf("after removal = %+v", st)
+	}
+}
