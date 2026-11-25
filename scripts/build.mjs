@@ -35,6 +35,10 @@
  *                        written; patternPages() checks the folder)
  *   demo/ds/             the live tour's bundle (tools/bundle.mjs on
  *                        demo/ds.config.json, from the dist/ just written)
+ *   server/zdash/dist/   the copy of Z-Dash the Go module (server/) embeds
+ *                        and serves: the runtime files of dist/, its tools,
+ *                        VERSION and SHA256SUMS, a vendored copy as
+ *                        scripts/vendor.sh writes one (serverCopy())
  *   Blocks between "generated:" markers inside hand-written files
  *   (replaceBlock): the hooks table of docs/theming.md and the hooks of
  *   themes/example.css (meta.json "hooks", src/core/hooks.json), the component
@@ -1609,6 +1613,64 @@ export function diffTourBundle() {
   return problems;
 }
 
+// ── The Go module's copy (server/zdash/dist/) ──────────────────────────
+
+/**
+ * The Go module in server/ embeds Z-Dash and serves it under /z-dash/, so an
+ * app built on it vendors nothing: `go get` brings the server and the design
+ * system together. A Go module cannot reach ../dist, and the whole repository
+ * is too big to download as a module, so the build writes a lean copy into
+ * the module: the files a page loads, plus what tools/check-project.mjs reads
+ * and the tools themselves, with VERSION and SHA256SUMS as scripts/vendor.sh
+ * writes them (tools/verify.mjs and the check's "vendor" rule accept it).
+ * --check compares it with the build.
+ */
+export const SERVER_COPY = 'server/zdash/dist';
+const SERVER_COPY_FILES = /^(ds\.css|ds\.min\.css|ds\.min\.css\.map|ds\.min\.js|ds\.d\.ts|deprecations\.json|manifest\.json|tokens\.json|LICENSE|fonts\/.+|themes\/.+|tools\/.+)$/;
+const hasServer = () => existsSync(join(ROOT, 'server', 'go.mod'));
+
+/** The copy made from a build: Map of path inside the copy -> Buffer. */
+export function serverCopy(out = build()) {
+  const copy = new Map();
+  for (const [path, content] of out) if (SERVER_COPY_FILES.test(path)) copy.set(path, Buffer.from(content));
+  copy.set('VERSION', Buffer.from(`version ${packageInfo().version}\nsource github:saschazesiger/Z-Dash (the Go module's copy)\n`, 'utf8'));
+  const sums = [...copy.keys()].sort().map((path) => `${createHash('sha256').update(copy.get(path)).digest('hex')}  ${path}`);
+  copy.set('SHA256SUMS', Buffer.from(`${sums.join('\n')}\n`, 'utf8'));
+  return copy;
+}
+
+/** The copy's files as repository paths (for --generated, once git tracks them). */
+export function serverCopyFiles(out) {
+  return hasServer() ? [...serverCopy(out).keys()].sort().map((path) => `${SERVER_COPY}/${path}`) : [];
+}
+
+/** Writes server/zdash/dist/ anew from a build. */
+export function writeServerCopy(out) {
+  if (!hasServer()) return 0;
+  const copy = serverCopy(out);
+  rmSync(join(ROOT, SERVER_COPY), { recursive: true, force: true });
+  for (const [path, content] of copy) {
+    mkdirSync(dirname(join(ROOT, SERVER_COPY, path)), { recursive: true });
+    writeFileSync(join(ROOT, SERVER_COPY, path), content);
+  }
+  return copy.size;
+}
+
+/** The files of server/zdash/dist/ that differ from the build (missing, changed, extra). */
+export function diffServerCopy(out) {
+  if (!hasServer()) return [];
+  const folder = join(ROOT, SERVER_COPY);
+  const present = new Set(existsSync(folder) ? filesIn(folder).map((file) => posix(relative(folder, file))) : []);
+  const problems = [];
+  for (const [path, content] of serverCopy(out)) {
+    if (!present.has(path)) problems.push(`missing: ${SERVER_COPY}/${path}`);
+    else if (!readFileSync(join(folder, path)).equals(content)) problems.push(`outdated: ${SERVER_COPY}/${path}`);
+    present.delete(path);
+  }
+  for (const path of present) problems.push(`extra: ${SERVER_COPY}/${path}`);
+  return problems;
+}
+
 /** The generated files of the repository: Map of repository path -> text. */
 export function generatedFiles(list = components()) {
   return new Map([
@@ -2220,19 +2282,19 @@ function main() {
   // The generated paths alone: `git checkout -- dist $(node scripts/build.mjs --generated)` on a group branch.
   // The patterns' bundles only as far as git tracks them: one path git does not know fails that checkout as a whole.
   if (process.argv.includes('--generated')) {
-    console.log([...files.keys(), ...trackedOnly([...patternBundleFiles(), ...tourBundleFiles(), ...siteBundleFiles()])].join('\n'));
+    console.log([...files.keys(), ...trackedOnly([...patternBundleFiles(), ...tourBundleFiles(), ...siteBundleFiles(), ...serverCopyFiles()])].join('\n'));
     return;
   }
   if (process.argv.includes('--check')) {
     const out = build();
     const distProblems = diffDist(out);
     // The patterns', the tour's and the reference app's bundles are made from dist/ on disk: compared only once that is current.
-    const problems = [...diffGenerated(files), ...distProblems, ...(distProblems.length ? [] : [...diffPatternBundles(), ...diffTourBundle(), ...diffSiteBundles()])];
+    const problems = [...diffGenerated(files), ...distProblems, ...diffServerCopy(out), ...(distProblems.length ? [] : [...diffPatternBundles(), ...diffTourBundle(), ...diffSiteBundles()])];
     if (problems.length) {
       console.error(`dist/ or a generated file is not up to date (run npm run build):\n  ${problems.join('\n  ')}`);
       process.exit(1);
     }
-    console.log(`dist/ (${out.size} files) and the generated files (${[...files.keys(), ...(hasPatterns() ? [`${PATTERNS}/${PATTERN_OUT}/`] : []), ...(hasTour() ? [`${TOUR}/${TOUR_OUT}/`] : [])].join(', ')}) are up to date.`);
+    console.log(`dist/ (${out.size} files) and the generated files (${[...files.keys(), ...(hasPatterns() ? [`${PATTERNS}/${PATTERN_OUT}/`] : []), ...(hasTour() ? [`${TOUR}/${TOUR_OUT}/`] : []), ...(hasServer() ? [`${SERVER_COPY}/`] : [])].join(', ')}) are up to date.`);
     return;
   }
   for (const [path, content] of files) writeFileSync(join(ROOT, path), content);
@@ -2245,7 +2307,8 @@ function main() {
   const bundles = writePatternBundles();
   const tour = writeTourBundle();
   const site = writeSiteBundles();
-  console.log(`Built dist/ (${out.size} files, version ${packageInfo().version}) and ${[...files.keys(), ...(bundles ? [`${PATTERNS}/${PATTERN_OUT}/ (${bundles} files)`] : []), ...(tour ? [`${TOUR}/${TOUR_OUT}/ (${tour} files)`] : []), ...(site ? [`${siteConfigs().map((c) => c.replace(/ds\.config\.json$/, 'ds/')).join(', ')} (${site} files)`] : [])].join(', ')}.`);
+  const server = writeServerCopy(out);
+  console.log(`Built dist/ (${out.size} files, version ${packageInfo().version}) and ${[...files.keys(), ...(bundles ? [`${PATTERNS}/${PATTERN_OUT}/ (${bundles} files)`] : []), ...(tour ? [`${TOUR}/${TOUR_OUT}/ (${tour} files)`] : []), ...(site ? [`${siteConfigs().map((c) => c.replace(/ds\.config\.json$/, 'ds/')).join(', ')} (${site} files)`] : []), ...(server ? [`${SERVER_COPY}/ (${server} files)`] : [])].join(', ')}.`);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
