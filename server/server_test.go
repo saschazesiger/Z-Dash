@@ -532,3 +532,70 @@ func TestEventsJoinBeforeTheyOpen(t *testing.T) {
 		}
 	}
 }
+
+// An app's old password keeps signing in, moves to the server's format on
+// the first sign-in (whatever its length), and blocks a first password
+// while it exists.
+func TestLegacyPassword(t *testing.T) {
+	old := "short1" // shorter than a new password may be
+	stored := true
+	dropped := false
+	signedOut := make(chan struct{}, 4)
+	a := newApp(t, Config{
+		LegacyPassword: &LegacyPassword{
+			Has:    func() bool { return stored },
+			Verify: func(pw string) bool { return stored && pw == old },
+			Drop:   func() error { stored, dropped = false, true; return nil },
+		},
+		SameSite:  http.SameSiteLaxMode,
+		OnSignOut: func() { signedOut <- struct{}{} },
+	})
+	h := a.Handler()
+	if info := sessionOf(t, h, nil); info.NeedsPassword {
+		t.Fatal("an app with an old password asks for a first one")
+	}
+	if w := do(t, h, "POST", "/api/setup/password", `{"password":"a brand new password"}`, map[string]string{}); w.Code != 409 {
+		t.Fatalf("a first password over the old one: %d", w.Code)
+	}
+	if w := do(t, h, "POST", "/api/login", `{"password":"wrong one"}`, map[string]string{}); w.Code != 400 {
+		t.Fatalf("a wrong password: %d", w.Code)
+	}
+	r := httptest.NewRequest("POST", "http://192.168.1.5/api/login", strings.NewReader(`{"password":"short1"}`))
+	r.Header.Set(CSRFHeader, "1")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !dropped || stored {
+		t.Fatalf("the old password: %d, dropped %v", w.Code, dropped)
+	}
+	cookie := w.Result().Cookies()[0]
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("SameSite = %v", cookie.SameSite)
+	}
+	jar := map[string]string{}
+	if w := do(t, h, "POST", "/api/login", `{"password":"short1"}`, jar); w.Code != 200 {
+		t.Fatalf("the moved password: %d", w.Code)
+	}
+	do(t, h, "POST", "/api/logout", `{}`, jar)
+	select {
+	case <-signedOut:
+	case <-time.After(2 * time.Second):
+		t.Error("OnSignOut was not called on a sign-out")
+	}
+}
+
+// An app with pages of its own serves them at /; the security headers can
+// be adjusted, and a frame of its own pages is allowed when it asks.
+func TestPagesAndHeaders(t *testing.T) {
+	a := newApp(t, Config{Open: true,
+		Pages:   http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "page "+r.URL.Path) }),
+		CSP:     map[string]string{"frame-ancestors": "'self'"},
+		Headers: func(h http.Header) { h.Set("X-Extra", "1") },
+	})
+	w := do(t, a.Handler(), "GET", "/admin", "", nil)
+	if w.Body.String() != "page /admin" || w.Header().Get("X-Extra") != "1" || w.Header().Get("X-Frame-Options") != "SAMEORIGIN" {
+		t.Fatalf("pages: %q %v", w.Body, w.Header())
+	}
+	if info := sessionOf(t, a.Handler(), nil); !info.Pages {
+		t.Error("an app with pages says it has none")
+	}
+}

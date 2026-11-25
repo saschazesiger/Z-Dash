@@ -38,6 +38,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/saschazesiger/Z-Dash/server/cloudflare"
@@ -109,8 +110,26 @@ type Config struct {
 	// serves only Z-Dash, the shell and the API.
 	Assets fs.FS
 	// CSP adds sources to the Content-Security-Policy, by directive:
-	// {"form-action": "https://github.com"}.
+	// {"form-action": "https://github.com"}. A value replaces a 'none'.
 	CSP map[string]string
+	// Headers adjusts the security headers of every answer after the
+	// server set them (a handler may still change them for its own answer).
+	Headers func(h http.Header)
+	// Pages serves / for an app with pages of its own that it gates itself
+	// (redirects to a sign-in page): it replaces Assets. The server's own
+	// routes, the bypass paths and the app's routes keep their patterns.
+	Pages http.Handler
+
+	// SameSite is the session cookie's SameSite mode, Strict by default.
+	// Lax lets a link from another app open a page signed in.
+	SameSite http.SameSite
+	// LegacyPassword is an admin password the app stored before it ran on
+	// the server; see LegacyPassword.
+	LegacyPassword *LegacyPassword
+	// OnSignOut is called (in a goroutine of its own) when sessions end: a
+	// sign-out, a new password that signs the other browsers out. An app
+	// ends its own long-lived streams there; StillSignedIn says which.
+	OnSignOut func()
 
 	// Migrations create and change the app's own tables in the database.
 	Migrations []store.Migration
@@ -300,6 +319,13 @@ func New(cfg Config) (*App, error) {
 		a.db, a.kv, a.sealer = db, db, box
 	}
 	a.auth = newAuth(a.kv, cookieName(cfg.Slug), a.logf)
+	if cfg.SameSite != 0 {
+		a.auth.sameSite = cfg.SameSite
+	}
+	a.auth.legacy = cfg.LegacyPassword
+	if cfg.OnSignOut != nil {
+		a.auth.signedOut = cfg.OnSignOut
+	}
 	if cfg.AdminPassword != "" {
 		// A password that cannot be set must stop the start: otherwise the
 		// first visitor would set one.
@@ -436,7 +462,7 @@ func (a *App) add(pattern string, h http.Handler) {
 // running requests finish for a few seconds and closes the database.
 func (a *App) Run(ctx context.Context) error {
 	local, tunnel := a.handlers()
-	ln, err := net.Listen("tcp", a.cfg.Listen)
+	ln, err := listenRetry(a.cfg.Listen)
 	if err != nil {
 		return fmt.Errorf("listen on %s: %w", a.cfg.Listen, err)
 	}
@@ -490,6 +516,25 @@ func (a *App) Run(ctx context.Context) error {
 		}
 	}
 	return runErr
+}
+
+// listenRetry listens on addr, trying again for a few seconds while the
+// address is in use: a process that restarts itself in place (or a
+// supervisor that starts it again at once) may find the old socket not yet
+// gone.
+func listenRetry(addr string) (net.Listener, error) {
+	var err error
+	for i := 0; i < 20; i++ {
+		var ln net.Listener
+		if ln, err = net.Listen("tcp", addr); err == nil {
+			return ln, nil
+		}
+		if !errors.Is(err, syscall.EADDRINUSE) {
+			return nil, err
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return nil, err
 }
 
 // tunnelOrigin is what cloudflared sends the requests to.

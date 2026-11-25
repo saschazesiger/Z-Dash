@@ -90,9 +90,13 @@ type session struct {
 
 // auth holds the password, the sessions and the login limits.
 type auth struct {
-	kv     KV
-	cookie string
-	logf   func(string, ...any)
+	kv       KV
+	cookie   string
+	sameSite http.SameSite
+	legacy   *LegacyPassword
+	logf     func(string, ...any)
+	// signedOut is told when sessions end (Config.OnSignOut).
+	signedOut func()
 
 	mu       sync.Mutex
 	sessions map[string]session // by token hash
@@ -107,7 +111,8 @@ type attempt struct {
 }
 
 func newAuth(kv KV, cookie string, logf func(string, ...any)) *auth {
-	a := &auth{kv: kv, cookie: cookie, logf: logf, sessions: map[string]session{}, attempts: map[string]*attempt{}, now: time.Now}
+	a := &auth{kv: kv, cookie: cookie, sameSite: http.SameSiteStrictMode, logf: logf, signedOut: func() {},
+		sessions: map[string]session{}, attempts: map[string]*attempt{}, now: time.Now}
 	// Sessions survive a restart, so an update does not sign everybody out.
 	if raw, err := kv.Get(keySessions); err == nil {
 		if err := json.Unmarshal(raw, &a.sessions); err != nil {
@@ -124,7 +129,21 @@ func newAuth(kv KV, cookie string, logf func(string, ...any)) *auth {
 
 func (a *auth) hasPassword() bool {
 	_, err := a.kv.Get(keyPassword)
-	return err == nil
+	return err == nil || (a.legacy != nil && a.legacy.Has())
+}
+
+// LegacyPassword is an admin password an app stored in a format of its own
+// before it ran on the server. It keeps signing in, and the first sign-in
+// that matches it stores the password in the server's format (whatever its
+// length) and drops the old one; while it exists, nobody can set a first
+// password.
+type LegacyPassword struct {
+	// Has reports whether the old password is stored.
+	Has func() bool
+	// Verify checks a password against it.
+	Verify func(password string) bool
+	// Drop forgets it, once the server keeps the password itself.
+	Drop func() error
 }
 
 // hash is hashPassword within the bound on Argon2 runs at once.
@@ -167,10 +186,13 @@ func (a *auth) setFirstPassword(pw string) (bool, error) {
 var hashing = make(chan struct{}, 4)
 
 func (a *auth) verify(pw string) bool {
+	raw, err := a.kv.Get(keyPassword)
+	if errors.Is(err, store.ErrNotFound) && a.legacy != nil && a.legacy.Has() {
+		return a.verifyLegacy(pw)
+	}
 	hashing <- struct{}{}
 	defer func() { <-hashing }()
 	var h passwordHash
-	raw, err := a.kv.Get(keyPassword)
 	if err == nil {
 		err = json.Unmarshal(raw, &h)
 	}
@@ -180,6 +202,35 @@ func (a *auth) verify(pw string) bool {
 		return false
 	}
 	return h.matches(pw)
+}
+
+// verifyLegacy checks the app's old password and, when it matches, moves
+// it to the server's format. The old one is dropped only once the new one
+// is stored, so a failed move signs in again the old way.
+func (a *auth) verifyLegacy(pw string) bool {
+	hashing <- struct{}{}
+	ok := a.legacy.Verify(pw)
+	var h passwordHash
+	if ok {
+		h = hashPassword(pw)
+	}
+	<-hashing
+	if !ok {
+		return false
+	}
+	raw, err := json.Marshal(h)
+	if err == nil {
+		err = a.kv.Set(keyPassword, raw)
+	}
+	if err != nil {
+		a.logf("the admin password could not be moved to the new format: %v", err)
+		return true
+	}
+	if err := a.legacy.Drop(); err != nil {
+		a.logf("the old admin password could not be dropped: %v", err)
+	}
+	a.logf("The admin password was moved to the new format")
+	return true
 }
 
 // limited reports how long a client still has to wait before the next
@@ -257,7 +308,7 @@ func (a *auth) startSession(w http.ResponseWriter, r *http.Request) {
 	a.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name: a.cookie, Value: token, Path: "/", Expires: exp, MaxAge: int(sessionMaxAge / time.Second),
-		HttpOnly: true, SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil,
+		HttpOnly: true, SameSite: a.sameSite, Secure: secure(r),
 	})
 }
 
@@ -269,8 +320,12 @@ func (a *auth) endSession(w http.ResponseWriter, r *http.Request) {
 		a.mu.Unlock()
 	}
 	http.SetCookie(w, &http.Cookie{Name: a.cookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true,
-		SameSite: http.SameSiteStrictMode, Secure: r.TLS != nil})
+		SameSite: a.sameSite, Secure: secure(r)})
 }
+
+// secure is whether the browser reached the app over https: TLS of its own,
+// or the tunnel (Cloudflare's edge speaks https to the browser).
+func secure(r *http.Request) bool { return r.TLS != nil || Who(r).Via == "tunnel" }
 
 // dropSessions signs everybody out except the session of keepToken.
 func (a *auth) dropSessions(keepToken string) {
@@ -286,6 +341,7 @@ func (a *auth) dropSessions(keepToken string) {
 		}
 	}
 	a.saveLocked()
+	go a.signedOut()
 }
 
 func (a *auth) check(r *http.Request) bool {
@@ -328,6 +384,21 @@ func (a *auth) saveLocked() {
 // sets it on the local listener).
 func (a *App) HasPassword() bool { return a.auth.hasPassword() }
 
+// SetFirstPassword sets the admin password if none is set yet, atomically,
+// and reports whether this call set it: for an app whose own first-run page
+// asks for more than the password.
+func (a *App) SetFirstPassword(password string) (bool, error) {
+	return a.auth.setFirstPassword(password)
+}
+
+// StartSession signs the browser of r in: a new session and its cookie.
+func (a *App) StartSession(w http.ResponseWriter, r *http.Request) { a.auth.startSession(w, r) }
+
+// StillSignedIn checks a long-lived request (a WebSocket, a stream) again:
+// its session was not ended, its address may still sign in through the
+// tunnel.
+func (a *App) StillSignedIn(r *http.Request) bool { return a.stillSignedIn(r, Who(r)) }
+
 // --- handlers ----------------------------------------------------------------
 
 // SessionInfo is what GET /api/session answers; the shell starts from it.
@@ -356,7 +427,7 @@ type SessionInfo struct {
 
 func (a *App) session(w http.ResponseWriter, r *http.Request) {
 	id := Who(r)
-	info := SessionInfo{Name: a.cfg.Name, Version: a.cfg.Version, Env: a.cfg.Env, Pages: a.assets != nil,
+	info := SessionInfo{Name: a.cfg.Name, Version: a.cfg.Version, Env: a.cfg.Env, Pages: a.assets != nil || a.cfg.Pages != nil,
 		Via: id.Via, Email: id.Email, Open: a.cfg.Open}
 	info.SignedIn = a.SignedIn(r)
 	if id.Via == "local" && !a.cfg.Open {
@@ -442,6 +513,7 @@ func (a *App) firstPassword(w http.ResponseWriter, r *http.Request) {
 
 func (a *App) logout(w http.ResponseWriter, r *http.Request) {
 	a.auth.endSession(w, r)
+	go a.auth.signedOut()
 	next := ""
 	if Who(r).Via == "tunnel" {
 		next = accessLogout

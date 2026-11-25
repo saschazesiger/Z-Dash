@@ -111,7 +111,9 @@ func (a *App) baseMux() *http.ServeMux {
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusNotFound, "This API address does not exist.")
 	})
-	if a.assets != nil {
+	if a.cfg.Pages != nil {
+		mux.Handle("/", a.cfg.Pages)
+	} else if a.assets != nil {
 		mux.Handle("/", a.assets)
 	} else {
 		mux.Handle("/", a.zdash.redirectToShell())
@@ -184,6 +186,23 @@ func (a *App) setSecurityHeaders(w http.ResponseWriter) {
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
 	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+	if strings.Contains(a.cspDirective("frame-ancestors"), "'self'") {
+		// Framed by its own pages: X-Frame-Options follows frame-ancestors.
+		h.Set("X-Frame-Options", "SAMEORIGIN")
+	}
+	if a.cfg.Headers != nil {
+		a.cfg.Headers(h)
+	}
+}
+
+// cspDirective is the value of one directive of the policy.
+func (a *App) cspDirective(name string) string {
+	for _, part := range strings.Split(a.csp(), "; ") {
+		if k, v, ok := strings.Cut(part, " "); ok && k == name {
+			return v
+		}
+	}
+	return ""
 }
 
 func (a *App) headers(next http.Handler) http.Handler {

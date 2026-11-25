@@ -131,6 +131,11 @@ app's name (`Inventory` reads `INVENTORY_DATA` ...; `Config.Env` sets another).
 | `CSP` | | | sources to add, by directive: `{"form-action": "https://github.com"}` |
 | `Migrations` | | | the app's tables |
 | `KV`, `Sealer` | | the database's `kv` table, the secret box | for an app that keeps a database of its own (below) |
+| `Pages` | | | a handler for `/` instead of `Assets`, for an app that serves and gates its own pages (sign-in page, redirects) |
+| `Headers` | | | adjusts the security headers of every answer (a handler may still change its own) |
+| `SameSite` | | Strict | the session cookie's mode; Lax lets a link from another app open a page signed in |
+| `LegacyPassword` | | | an admin password the app stored in a format of its own before (below) |
+| `OnSignOut` | | | called when sessions end, so the app ends its own long-lived streams |
 
 Keep `secret.key` out of the backups of the database, or set `_SECRET_KEY` from a secret store: with both, a stolen
 backup opens the tunnel's token.
@@ -222,3 +227,11 @@ table; `Get` answers `store.ErrNotFound` for a missing key) and a `Config.Sealer
 the keys `auth.password` (an Argon2id hash as JSON), `auth.sessions` and `cloudflare:*`; an app whose password and
 sessions sit under the same keys in the same format keeps them. The session cookie is `<slug>_session`
 (`my-app` → `my_app_session`).
+
+An app whose old password is in another format gives `Config.LegacyPassword` (`Has`, `Verify`, `Drop`): it keeps
+signing in, the first sign-in that matches stores it in the server's format, whatever its length, and drops the old
+one; while it exists nobody can set a first password. Sessions of an earlier version carry over when the app writes
+them into `auth.sessions` before `server.New`: a JSON object from the hex SHA-256 of each cookie value to
+`{"expires": <Unix ms>}`, and the cookie keeps its name. An app with a first-run page of its own (one that asks for
+more than the password) calls `app.SetFirstPassword` and `app.StartSession`; a WebSocket or stream of its own checks
+`app.StillSignedIn(r)` now and then and ends in `Config.OnSignOut`.
