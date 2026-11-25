@@ -98,6 +98,10 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, http.StatusInternalServerError, "Live updates are not supported by this connection.")
 		return
 	}
+	// Join the hub before the answer starts: a client that sees the stream
+	// open must not miss a notice sent right after.
+	c := a.hub.add()
+	defer a.hub.remove(c)
 	h := w.Header()
 	h.Set("Content-Type", "text/event-stream")
 	h.Set("Cache-Control", "no-store")
@@ -106,8 +110,6 @@ func (a *App) events(w http.ResponseWriter, r *http.Request) {
 	fmt.Fprint(w, "retry: 3000\n\n")
 	flusher.Flush()
 
-	c := a.hub.add()
-	defer a.hub.remove(c)
 	ping := time.NewTicker(25 * time.Second)
 	defer ping.Stop()
 	ctx := r.Context()

@@ -504,3 +504,31 @@ func TestUnguardedSkipsTheHostCheck(t *testing.T) {
 		}
 	}
 }
+
+// A notice sent as soon as the stream is open is not lost.
+func TestEventsJoinBeforeTheyOpen(t *testing.T) {
+	for i := 0; i < 20; i++ {
+		a := newApp(t, Config{Open: true})
+		srv := httptest.NewServer(a.Handler())
+		resp, err := http.Get(srv.URL + "/api/events")
+		if err != nil {
+			t.Fatal(err)
+		}
+		a.Notify("now")
+		buf := make([]byte, 512)
+		got := ""
+		deadline := time.Now().Add(3 * time.Second)
+		for time.Now().Before(deadline) && !strings.Contains(got, `"now"`) {
+			n, err := resp.Body.Read(buf)
+			got += string(buf[:n])
+			if err != nil {
+				break
+			}
+		}
+		resp.Body.Close()
+		srv.Close()
+		if !strings.Contains(got, `"now"`) {
+			t.Fatalf("run %d: the notice was lost: %q", i, got)
+		}
+	}
+}
