@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
 )
 
 // runConfig is what cloudflared is started with; a change restarts it.
