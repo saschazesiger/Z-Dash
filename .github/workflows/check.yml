@@ -34,6 +34,23 @@ jobs:
       - run: npm run check
       - run: sh scripts/vendor.sh --from . "$RUNNER_TEMP/vendor" && sh scripts/vendor.sh --check "$RUNNER_TEMP/vendor"
 
+  # The Go server module (server/, docs/server.md): vet and the tests with the race detector. Its copy of Z-Dash
+  # (server/zdash/dist/) is compared with the build by npm run check above.
+  server:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: server/go.mod
+          cache-dependency-path: server/go.sum
+      - run: test -z "$(gofmt -l .)" || { gofmt -l .; exit 1; }
+      - run: go vet ./...
+      - run: go test -race ./...
+
   browser:
     needs: check
     runs-on: ubuntu-latest

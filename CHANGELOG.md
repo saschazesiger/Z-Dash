@@ -4,6 +4,25 @@ All notable changes. Versions follow [semver](https://semver.org): renaming or r
 export is a major change; adding one is a minor change. Identifiers such as D7 refer to the design decisions in
 [plans/motion-2.md](plans/motion-2.md).
 
+## 3.3.0
+
+The Go server module, an addition: nothing of the design system was renamed or removed, no migration is required.
+
+### Added
+
+- **Server** (`server/`, the Go module `github.com/saschazesiger/Z-Dash/server`, [docs/server.md](docs/server.md)):
+  everything an admin app in Go needs around its own pages. Two listeners (the local one with an admin password the
+  first visitor sets, the tunnel's one behind Cloudflare Access), the Cloudflare tunnel set up from the interface with
+  an API token (tunnel, DNS record, Access applications, `cloudflared` supervised and checked from outside), a Host
+  check against DNS rebinding, a CSRF guard, a strict Content-Security-Policy, rate-limited logins, a SQLite database
+  with numbered migrations, sealed secrets, server-sent events, `GET /healthz` and a graceful shutdown. Z-Dash is
+  embedded and served at `/z-dash/`, so an app on the server vendors nothing; the shell at `/z-dash/server/` brings
+  the sign-in, the first password, the account, the tunnel settings and the password. An example app
+  (`server/example/`), a Dockerfile and workflows to copy (`server/templates/`).
+- **Build:** `npm run build` writes the copy of Z-Dash the module embeds into `server/zdash/dist/` (the runtime files,
+  the tools, `VERSION` and `SHA256SUMS`, a vendored copy as `scripts/vendor.sh` writes one); `npm run check` compares
+  it. CI runs `go vet` and `go test -race` on the module.
+
 ## 3.2.0
 
 Additions to the lightbox and a fix of its fit; nothing was renamed or removed, no migration is required.

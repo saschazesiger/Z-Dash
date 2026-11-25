@@ -143,6 +143,11 @@ sh vendor.sh --check vendor/z-dash     # verify (exit 1 if anything changed)
 Windows PowerShell: `scripts/vendor.ps1` with the same arguments (`-From`, `-Check`). A nightly GitHub Actions
 workflow that keeps the copy on `main` is in [`templates/`](templates/update-z-dash.yml).
 
+**🖥️ With its server (Go).** For an admin app written in Go, `github.com/saschazesiger/Z-Dash/server` brings
+everything around the app's own pages: sign-in with an admin password, a Cloudflare tunnel with Cloudflare Access set
+up from the interface, the security guards, a SQLite database, live updates, and Z-Dash itself embedded, so nothing is
+vendored. `go get github.com/saschazesiger/Z-Dash/server@main`, then [docs/server.md](docs/server.md).
+
 **🌍 CDN.** jsDelivr serves the repository (`@main`, or a commit hash to pin):
 
 ```html
@@ -225,6 +230,7 @@ Which component fits which need: the table at the top of [docs/components.md](do
 | 🌊 [Motion](docs/motion.md) | principles, motion tokens, rules, the choreography of every component, interruption, keyframes and utilities, `DS.motion` (FLIP, `countUp`, `transition`), indicator, morph, ripple, overlays, recipes, view transitions, scroll-driven effects |
 | 🖼️ [Icons](docs/icons.md) | the outline set and its helpers |
 | 📐 [Rules](docs/rules.md) | the design rules the components follow, and the accessibility statement (WCAG 2.2 AA) |
+| 🖥️ [Server](docs/server.md) | the Go module around an admin app: sign-in, the Cloudflare tunnel and Access, the guards, a database, Z-Dash embedded, the shell |
 
 ## 🗂️ Files
 
@@ -238,6 +244,8 @@ example/         the reference app: a device console on top of dist/, as a proje
 styleguide/      living styleguide (open index.html; motion.html: the Motion Lab; views.html: view transitions and scrolling)
 scripts/         build.mjs, gen-meta.mjs, motion-curves.mjs, vendor.sh, vendor.ps1, site.sh (assembles the GitHub Pages site); tools/: the sources of dist/tools/
 templates/       update-z-dash.yml, a GitHub Actions workflow that keeps a copy on main
+server/          the Go module (github.com/saschazesiger/Z-Dash/server): the server around an admin app, its Cloudflare
+                 tunnel, the shell (zdash/shell/), the example app, templates for apps; zdash/dist/ is generated
 test/            node --test unit tests (npm ci once, for lightningcss); test/browser/ Playwright tests (three engines)
 docs/            the documentation above (docs/images/: the pictures of this README)
 AGENTS.md        how to work on the system (CLAUDE.md points to it)
