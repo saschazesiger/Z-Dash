@@ -126,6 +126,10 @@ type Config struct {
 	// LegacyPassword is an admin password the app stored before it ran on
 	// the server; see LegacyPassword.
 	LegacyPassword *LegacyPassword
+	// OwnSetup: the app sets the first password on a first-run page of its
+	// own (with app.SetFirstPassword), which asks for more or refuses while
+	// it restores; the server's POST /api/setup/password is not served.
+	OwnSetup bool
 	// OnSignOut is called (in a goroutine of its own) when sessions end: a
 	// sign-out, a new password that signs the other browsers out. An app
 	// ends its own long-lived streams there; StillSignedIn says which.
@@ -472,14 +476,16 @@ func (a *App) Run(ctx context.Context) error {
 	// nothing listens for it.
 	where := "no tunnel listener (" + a.cfg.Name + " runs with a stand-in tunnel)"
 	if a.cf.Origin() != "" {
-		tln, err := a.listenTunnel()
-		if err != nil {
-			ln.Close()
-			return err
+		// A tunnel that cannot listen must not take the local address
+		// down with it: that is the way in to repair it.
+		if tln, err := a.listenTunnel(); err != nil {
+			where = "the tunnel cannot reach it: " + err.Error()
+			a.logf("%s: the tunnel's listener failed, %s serves on its local address only: %v", a.cfg.Name, a.cfg.Name, err)
+		} else {
+			listeners = append(listeners, tln)
+			servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: a.cfg.ReadTimeout, IdleTimeout: 2 * time.Minute})
+			where = "the tunnel reaches it at " + a.cf.Origin()
 		}
-		listeners = append(listeners, tln)
-		servers = append(servers, &http.Server{Handler: tunnel, ReadHeaderTimeout: 20 * time.Second, ReadTimeout: a.cfg.ReadTimeout, IdleTimeout: 2 * time.Minute})
-		where = "the tunnel reaches it at " + a.cf.Origin()
 	}
 	errs := make(chan error, len(listeners))
 	for i, l := range listeners {

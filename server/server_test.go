@@ -1,12 +1,15 @@
 package server
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -597,5 +600,29 @@ func TestPagesAndHeaders(t *testing.T) {
 	}
 	if info := sessionOf(t, a.Handler(), nil); !info.Pages {
 		t.Error("an app with pages says it has none")
+	}
+}
+
+// A tunnel socket that cannot be made leaves the local address serving;
+// OwnSetup takes the server's first-password route away.
+func TestTunnelFailureAndOwnSetup(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "run", "tunnel.sock"), 0o700); err != nil { // a directory where the socket goes
+		t.Fatal(err)
+	}
+	a := newApp(t, Config{DataDir: dir, Listen: "127.0.0.1:0", OwnSetup: true})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.Run(ctx) }()
+	time.Sleep(300 * time.Millisecond)
+	select {
+	case err := <-done:
+		t.Fatalf("Run stopped on a broken tunnel socket: %v", err)
+	default:
+	}
+	cancel()
+	<-done
+	if w := do(t, a.Handler(), "POST", "/api/setup/password", `{"password":"a long first password"}`, nil); w.Code != 404 {
+		t.Errorf("first-password route with OwnSetup: %d", w.Code)
 	}
 }

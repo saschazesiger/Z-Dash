@@ -136,6 +136,7 @@ app's name (`Inventory` reads `INVENTORY_DATA` ...; `Config.Env` sets another).
 | `SameSite` | | Strict | the session cookie's mode; Lax lets a link from another app open a page signed in |
 | `LegacyPassword` | | | an admin password the app stored in a format of its own before (below) |
 | `OnSignOut` | | | called when sessions end, so the app ends its own long-lived streams |
+| `OwnSetup` | | | the app sets the first password on its own first-run page (`app.SetFirstPassword`); `POST /api/setup/password` is not served |
 
 Keep `secret.key` out of the backups of the database, or set `_SECRET_KEY` from a secret store: with both, a stolen
 backup opens the tunnel's token.

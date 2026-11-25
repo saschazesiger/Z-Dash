@@ -91,7 +91,9 @@ func (a *App) baseMux() *http.ServeMux {
 	})
 	mux.HandleFunc("GET /api/session", a.session)
 	mux.HandleFunc("POST /api/login", a.guard(a.login))
-	mux.HandleFunc("POST /api/setup/password", a.guard(a.firstPassword))
+	if !a.cfg.OwnSetup {
+		mux.HandleFunc("POST /api/setup/password", a.guard(a.firstPassword))
+	}
 	mux.HandleFunc("POST /api/logout", a.guard(a.logout))
 	mux.Handle("POST /api/password", a.private(http.HandlerFunc(a.changePassword)))
 	mux.Handle("GET /api/events", a.private(http.HandlerFunc(a.events)))
