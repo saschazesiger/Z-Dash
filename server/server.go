@@ -91,8 +91,9 @@ type Config struct {
 
 	// Bypass are handlers Cloudflare Access lets through without a login,
 	// by path ("/webhook" covers /webhook and everything below it). They are
-	// served on both listeners, without the CSRF guard and without a login:
-	// each must check its caller itself (a signature, a token of its own).
+	// served on both listeners, without the CSRF guard, without a login and
+	// without the local listener's Host check: each must check its caller
+	// itself (a signature, a token of its own).
 	Bypass map[string]http.Handler
 	// BypassLabel says what the bypass paths are ("webhooks"), for the name
 	// of their Access policy.

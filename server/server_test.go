@@ -217,6 +217,26 @@ func TestTunnelGate(t *testing.T) {
 	}
 }
 
+// TestBypassSkipsHostCheck: a bypass path answers on the local listener by
+// any name (a model API or webhook behind the app's own reverse proxy);
+// every other path still refuses a public name.
+func TestBypassSkipsHostCheck(t *testing.T) {
+	hook := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { io.WriteString(w, "hook") })
+	a := newApp(t, Config{Bypass: map[string]http.Handler{"/v1": hook}})
+	h := a.Handler()
+	for path, want := range map[string]int{"/v1": 200, "/v1/models": 200, "/v1x": 403, "/": 403, "/api/session": 403,
+		"/v1/../api/session": 403} {
+		r := httptest.NewRequest("GET", "http://localhost"+path, nil)
+		r.URL.Path = path // as a raw request line sends it, uncleaned
+		r.Host = "app.example.com"
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, r)
+		if w.Code != want {
+			t.Errorf("%s by a public name: %d, want %d", path, w.Code, want)
+		}
+	}
+}
+
 func TestBypassPathsMustBeSafe(t *testing.T) {
 	for _, path := range []string{"/", "/api/hook", "/z-dash/x", "hook"} {
 		if _, err := New(Config{Name: "X", DataDir: t.TempDir(), Bypass: map[string]http.Handler{path: http.NotFoundHandler()}}); err == nil {

@@ -86,7 +86,7 @@ kind (a list of devices); copy it to start.
 | `app.Handle(pattern, h)`, `app.HandleFunc(pattern, f)` | a route for signed-in people; a request that changes something must also pass the CSRF guard (the shell's `api.js` sends the header `X-Z-Dash: 1`). `pattern` is a `net/http` pattern: `"GET /api/devices/{id}"` |
 | `app.Public(pattern, f)` | a route anybody on the local network may call, still behind the CSRF guard; through the tunnel it needs the Cloudflare Access login like every route that is not a bypass path |
 | `app.Unguarded(pattern, f)` | no sign-in, no CSRF guard and no Host check: a page that takes a plain form post or a navigation from another site, or an API with keys of its own that clients call by any name; the handler checks its caller itself and never relies on the session cookie |
-| `Config.Bypass` | handlers Cloudflare Access lets through without a login, by path (`"/webhook"`): no CSRF guard, no sign-in; each checks its caller itself (a signature, a token of its own) |
+| `Config.Bypass` | handlers Cloudflare Access lets through without a login, by path (`"/webhook"`): no CSRF guard, no sign-in, no Host check; each checks its caller itself (a signature, a token of its own, an API key) |
 
 A route that conflicts with the server's own (`/api/session`, `/z-dash/`, a bypass path, the files at `/`) or with
 another route panics where it is registered, as `net/http` does. The database has one connection: inside

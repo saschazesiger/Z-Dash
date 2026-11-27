@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"path"
 	"runtime/debug"
 	"sort"
 	"strconv"
@@ -224,7 +225,7 @@ func (a *App) headers(next http.Handler) http.Handler {
 // names are listed in Config.Hosts.
 func (a *App) localHost(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !localName(r.Host, a.cfg.Hosts) && !a.isUnguarded(r) {
+		if !localName(r.Host, a.cfg.Hosts) && !a.isUnguarded(r) && !a.isBypass(r.URL.Path) {
 			a.setSecurityHeaders(w)
 			http.Error(w, a.cfg.Name+" does not know the name "+strconv.Quote(r.Host)+". Open it by its IP address, "+
 				"or add the name to the environment variable "+a.cfg.Env+"_HOSTS.", http.StatusForbidden)
@@ -241,6 +242,22 @@ func (a *App) isUnguarded(r *http.Request) bool {
 	}
 	_, pattern := a.unguarded.Handler(r)
 	return pattern != ""
+}
+
+// isBypass reports whether a path is one of Config.Bypass. Their handlers
+// check their callers themselves and never use the session cookie, as
+// Unguarded routes do, so they answer by any name on the local listener
+// too: a webhook or a model API behind the app's own reverse proxy. The
+// path is cleaned first, so "/hook/../api/x" is checked as "/api/x".
+func (a *App) isBypass(p string) bool {
+	p = path.Clean("/" + p)
+	for b := range a.cfg.Bypass {
+		b = strings.TrimSuffix(b, "/")
+		if p == b || strings.HasPrefix(p, b+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func localName(hostport string, extra []string) bool {
